@@ -61,6 +61,7 @@ export function Sidebar({
   onNavigate,
   onSettings,
   onFolderAction,
+  inert,
 }: {
   accounts: Account[]
   boxesByAccount: Record<string, Mailbox[]>
@@ -83,6 +84,8 @@ export function Sidebar({
     accountId: string,
     folder?: Mailbox,
   ) => void
+  /** Set while the phone menu is closed, so its hidden links can't take focus. */
+  inert?: boolean
 }) {
   const keys = useShortcutText()
   const go = onNavigate
@@ -128,6 +131,7 @@ export function Sidebar({
         '[.sidebar-collapsed_&]:py-0 [.sidebar-collapsed_&]:px-2.25 max-[1100px]:w-51 max-[700px]:w-47 max-[700px]:py-0',
         'max-[700px]:px-2.5',
       )}
+      inert={inert}
     >
       <div
         className={cn(

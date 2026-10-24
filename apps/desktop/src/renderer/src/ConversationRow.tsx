@@ -1,4 +1,5 @@
 import { cn } from '@inlark/ui'
+import { useRef } from 'react'
 import { Archive, Lock, Mail, MailOpen, Paperclip, Star, Trash2 } from '@inlark/ui/icons'
 import { Checkbox, IconButton } from '@inlark/ui'
 import { isDraft, type Account, type Conversation } from '@inlark/core'
@@ -43,6 +44,9 @@ export function ConversationRow({
   onToggleRead: () => void
 }) {
   const keys = useShortcutText()
+  // On a touchscreen, holding a row selects it, since there is no hover to reveal the checkbox.
+  const hold = useRef<number>(undefined),
+    held = useRef(false)
   const moveLimit = actionLimit(a, 'move')
   const subject = c.subject || '(No subject)'
   // An unsent reply is flagged rather than counted, so it never reads as sent.
@@ -72,8 +76,21 @@ export function ConversationRow({
       role="row"
       id={'mail-' + encodeURIComponent(c.key)}
       aria-selected={selected}
-      onClick={onOpen}
+      onClick={() => {
+        if (held.current) held.current = false
+        else onOpen()
+      }}
       onMouseDown={onFocus}
+      onTouchStart={() => {
+        held.current = false
+        if (busy) return
+        hold.current = window.setTimeout(() => {
+          held.current = true
+          onSelect(false)
+        }, 450)
+      }}
+      onTouchMove={() => clearTimeout(hold.current)}
+      onTouchEnd={() => clearTimeout(hold.current)}
     >
       <div
         className={cn(

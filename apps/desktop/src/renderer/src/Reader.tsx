@@ -795,100 +795,106 @@ export function Reader({
           <span>{backLabel}</span>
         </Button>
         <span className="toolbar-divider w-[1px] h-4.25 bg-border-strong my-0 mx-1" />
-        {offersAction(view, 'archive') && (
-          <HintIconButton
-            disabled={busy}
-            label="Archive"
-            shortcut={keys('archive')}
-            hint={moveLimit}
-            onClick={() => onAction('archive')}
-          >
-            <Archive size={16} />
-          </HintIconButton>
-        )}
-        {offersAction(view, 'trash') && (
-          <HintIconButton
-            disabled={busy}
-            label="Move to trash"
-            shortcut={keys('trash')}
-            hint={moveLimit}
-            onClick={() => onAction('trash')}
-          >
-            <Trash2 size={16} />
-          </HintIconButton>
-        )}
-        <IconButton
-          disabled={busy}
-          label="Mark as unread"
-          shortcut={keys('unread')}
-          onClick={() => onAction('unread')}
-        >
-          <Mail size={16} />
-        </IconButton>
-        <IconButton
-          disabled={busy}
-          aria-pressed={starred}
-          label={starred ? 'Remove star' : 'Star conversation'}
-          shortcut={keys('star')}
-          onClick={() => onAction(starred ? 'unstar' : 'star')}
-        >
-          <Star size={16} className={cn(starred && 'starred [&:is(svg)]:fill-current text-star')} />
-        </IconButton>
-        <Dropdown
-          trigger={
-            <Button
-              variant="ghost"
-              size="icon"
+        {/* A plain group on desktop; on a phone it becomes the bar along the bottom. */}
+        <div className="reader-actions contents">
+          {offersAction(view, 'archive') && (
+            <HintIconButton
               disabled={busy}
-              aria-label="More conversation actions"
+              label="Archive"
+              shortcut={keys('archive')}
+              hint={moveLimit}
+              onClick={() => onAction('archive')}
             >
-              <MoreHorizontal size={17} />
-            </Button>
-          }
-        >
-          <MenuItem onClick={onMove} disabled={!!moveLimit}>
-            <FolderInput size={14} />
-            Move to folder
-            <ShortcutHint id="move" className="menu-shortcut ml-auto" />
-          </MenuItem>
-          {offersAction(view, 'spam') && (
-            <MenuItem onClick={() => onAction('spam')} disabled={!!moveLimit}>
-              <ShieldX size={14} />
-              Mark as spam
-              <ShortcutHint id="spam" className="menu-shortcut ml-auto" />
-            </MenuItem>
+              <Archive size={16} />
+            </HintIconButton>
           )}
-          {offersAction(view, 'notSpam') && (
-            <MenuItem onClick={() => onAction('notSpam')} disabled={!!moveLimit}>
-              <ShieldCheck size={14} />
-              Not spam
-              <ShortcutHint id="notSpam" className="menu-shortcut ml-auto" />
-            </MenuItem>
+          {offersAction(view, 'trash') && (
+            <HintIconButton
+              disabled={busy}
+              label="Move to trash"
+              shortcut={keys('trash')}
+              hint={moveLimit}
+              onClick={() => onAction('trash')}
+            >
+              <Trash2 size={16} />
+            </HintIconButton>
           )}
-          {offersAction(view, 'restore') && (
-            <MenuItem onClick={() => onAction('restore')} disabled={!!moveLimit}>
-              <Inbox size={14} />
-              Restore to inbox
-              <ShortcutHint id="restore" className="menu-shortcut ml-auto" />
-            </MenuItem>
-          )}
-          {offersAction(view, 'destroy') && (
-            <MenuItem danger onClick={() => onAction('destroy')} disabled={!!destroyLimit}>
-              <Trash2 size={14} />
-              Delete permanently
-            </MenuItem>
-          )}
-          {[...new Set([moveLimit, offersAction(view, 'destroy') && destroyLimit])]
-            .filter(Boolean)
-            .map((reason) => (
-              <p
-                className="menu-note max-w-60 mt-1 mb-0 mx-0 pt-1.75 pb-1.25 px-2.5 border-t border-solid border-t-border text-[11px] leading-[1.5] text-muted"
-                key={String(reason)}
+          <IconButton
+            disabled={busy}
+            label="Mark as unread"
+            shortcut={keys('unread')}
+            onClick={() => onAction('unread')}
+          >
+            <Mail size={16} />
+          </IconButton>
+          <IconButton
+            disabled={busy}
+            aria-pressed={starred}
+            label={starred ? 'Remove star' : 'Star conversation'}
+            shortcut={keys('star')}
+            onClick={() => onAction(starred ? 'unstar' : 'star')}
+          >
+            <Star
+              size={16}
+              className={cn(starred && 'starred [&:is(svg)]:fill-current text-star')}
+            />
+          </IconButton>
+          <Dropdown
+            trigger={
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                aria-label="More conversation actions"
               >
-                {reason}
-              </p>
-            ))}
-        </Dropdown>
+                <MoreHorizontal size={17} />
+              </Button>
+            }
+          >
+            <MenuItem onClick={onMove} disabled={!!moveLimit}>
+              <FolderInput size={14} />
+              Move to folder
+              <ShortcutHint id="move" className="menu-shortcut ml-auto" />
+            </MenuItem>
+            {offersAction(view, 'spam') && (
+              <MenuItem onClick={() => onAction('spam')} disabled={!!moveLimit}>
+                <ShieldX size={14} />
+                Mark as spam
+                <ShortcutHint id="spam" className="menu-shortcut ml-auto" />
+              </MenuItem>
+            )}
+            {offersAction(view, 'notSpam') && (
+              <MenuItem onClick={() => onAction('notSpam')} disabled={!!moveLimit}>
+                <ShieldCheck size={14} />
+                Not spam
+                <ShortcutHint id="notSpam" className="menu-shortcut ml-auto" />
+              </MenuItem>
+            )}
+            {offersAction(view, 'restore') && (
+              <MenuItem onClick={() => onAction('restore')} disabled={!!moveLimit}>
+                <Inbox size={14} />
+                Restore to inbox
+                <ShortcutHint id="restore" className="menu-shortcut ml-auto" />
+              </MenuItem>
+            )}
+            {offersAction(view, 'destroy') && (
+              <MenuItem danger onClick={() => onAction('destroy')} disabled={!!destroyLimit}>
+                <Trash2 size={14} />
+                Delete permanently
+              </MenuItem>
+            )}
+            {[...new Set([moveLimit, offersAction(view, 'destroy') && destroyLimit])]
+              .filter(Boolean)
+              .map((reason) => (
+                <p
+                  className="menu-note max-w-60 mt-1 mb-0 mx-0 pt-1.75 pb-1.25 px-2.5 border-t border-solid border-t-border text-[11px] leading-[1.5] text-muted"
+                  key={String(reason)}
+                >
+                  {reason}
+                </p>
+              ))}
+          </Dropdown>
+        </div>
         {unsubscribe && (
           <>
             <span className="toolbar-divider w-[1px] h-4.25 bg-border-strong my-0 mx-1" />

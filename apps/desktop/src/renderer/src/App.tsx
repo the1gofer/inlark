@@ -27,6 +27,7 @@ import {
   Star,
   MailOpen,
   MailMinus,
+  Menu,
   FolderInput,
   ShieldX,
   ShieldCheck,
@@ -129,6 +130,8 @@ type Toast = {
   tone?: 'error' | 'info'
 }
 let toastSequence = 0
+// Matches the width where the sidebar turns into a slide-out menu (see mobile.css).
+const phoneQuery = '(max-width: 640px)'
 const discardKeys = (item: DraftItem) =>
   item.kind === 'local' && item.draft.serverId
     ? [item.key, 'server:' + scopeKey(item.draft.accountId, item.draft.serverId)]
@@ -154,8 +157,15 @@ export function App() {
     views.some((v) => v.id === route.view) || route.view === 'all' ? route.view : 'inbox'
   ) as View
   const [collapsed, setCollapsed] = useState(localStorage.getItem('sidebar-collapsed') === 'true')
+  // On a phone the sidebar becomes a menu that slides over the mail.
+  const [phone, setPhone] = useState(() => matchMedia(phoneQuery).matches),
+    [drawerOpen, setDrawerOpen] = useState(false)
   const [density, setDensity] = useState<'compact' | 'comfortable'>(() =>
-    localStorage.getItem('mail-density') === 'comfortable' ? 'comfortable' : 'compact',
+    // Phones start with two-line rows, which fit a narrow screen better.
+    (localStorage.getItem('mail-density') || (matchMedia(phoneQuery).matches && 'comfortable')) ===
+    'comfortable'
+      ? 'comfortable'
+      : 'compact',
   )
   const encryption = useEncryption()
   const [unlock, unlockDialog] = useUnlock()
@@ -782,6 +792,15 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('sidebar-collapsed', String(collapsed))
   }, [collapsed])
+  useEffect(() => {
+    const media = matchMedia(phoneQuery)
+    const apply = () => setPhone(media.matches)
+    media.addEventListener('change', apply)
+    return () => media.removeEventListener('change', apply)
+  }, [])
+  useEffect(() => {
+    setDrawerOpen(false)
+  }, [phone, route.view, route.account, route.folder, route.q, settingsOpen, paletteOpen, composer])
   useEffect(() => {
     setSearch(route.q || '')
   }, [route.q])
@@ -1529,11 +1548,17 @@ export function App() {
         '[--row-height:64px] [--rail:224px]',
         '[&.sidebar-collapsed]:[--rail:64px] [&.density-compact]:[--row-height:44px]',
         'max-[1100px]:[&:not(.sidebar-collapsed)]:[--rail:204px] max-[700px]:[&:not(.sidebar-collapsed)]:[--rail:188px]',
-        collapsed && 'sidebar-collapsed',
+        collapsed && !phone && 'sidebar-collapsed',
+        phone && 'phone',
+        drawerOpen && 'drawer-open',
         'density-' + density,
       )}
     >
+      {phone && drawerOpen && (
+        <div className="drawer-scrim" aria-hidden="true" onClick={() => setDrawerOpen(false)} />
+      )}
       <Sidebar
+        inert={phone && !drawerOpen}
         accounts={accounts}
         boxesByAccount={mailboxCounts.boxesByAccount}
         route={route}
@@ -1543,7 +1568,7 @@ export function App() {
         sendingIssues={pendingSends.length}
         unreadCount={mailboxCounts.unread}
         accountUnread={mailboxCounts.byAccount}
-        collapsed={collapsed}
+        collapsed={collapsed && !phone}
         onToggleCollapsed={() => setCollapsed(!collapsed)}
         onSearch={() => setPaletteOpen(true)}
         onCompose={() => void compose()}
@@ -1645,6 +1670,15 @@ export function App() {
                 '@max-[680px]/mail:px-5 @max-[440px]/mail:[&_h1]:text-[21px]',
               )}
             >
+              {phone && (
+                <IconButton
+                  label="Open menu"
+                  className="drawer-toggle"
+                  onClick={() => setDrawerOpen(true)}
+                >
+                  <Menu size={18} />
+                </IconButton>
+              )}
               <div className="list-title min-w-0">
                 <div className="list-eyebrow [&_svg]:text-faint flex items-center gap-1.75 text-[11px] text-muted mb-1.5">
                   Mail <ChevronRight size={10} />
@@ -2295,6 +2329,12 @@ export function App() {
                   ])
                 }
               />
+            )}
+            {phone && !selected.size && !draftSelected.size && (
+              <button className="compose-fab" onClick={() => void compose()}>
+                <PenLine size={18} />
+                Compose
+              </button>
             )}
             <footer
               className={cn(
