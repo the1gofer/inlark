@@ -1,0 +1,14 @@
+**/node_modules
+**/out
+**/dist
+.git
+.pnpm-store
+.turbo
+.astro
+.wrangler
+release
+coverage
+test-results
+.test-data
+.env
+.env.*
