@@ -139,7 +139,9 @@ function AddressRuleInput({
             'split-suggestions absolute z-5 top-[calc(100%+4px)] left-0 right-0 max-h-72 overflow-auto p-1 bg-raised',
             'border border-solid border-border-strong rounded-lg shadow-popup [&_button]:flex [&_button]:flex-col',
             '[&_button]:items-start [&_button]:w-full [&_button]:py-1.5 [&_button]:px-2 [&_button]:text-left',
-            '[&_button]:border-0 [&_button]:rounded-sm [&_button]:bg-transparent [&_button.active]:bg-hover',
+            '[&_button]:border-0 [&_button]:rounded-sm [&_button]:bg-transparent',
+            // As strong as a focused mail row, so moving with the arrow keys is easy to follow.
+            '[&_button.active]:bg-selected [&_button.active]:shadow-[inset_2px_0_var(--accent)]',
             '[&_strong]:max-w-full [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap',
             '[&_small]:max-w-full [&_small]:overflow-hidden [&_small]:text-ellipsis [&_small]:whitespace-nowrap',
             '[&_strong]:text-[12px] [&_strong]:font-medium [&_small]:text-[11px] [&_small]:text-muted',
@@ -155,6 +157,9 @@ function AddressRuleInput({
               role="option"
               aria-selected={i === highlighted}
               className={cn(i === highlighted && 'active')}
+              ref={(node) => {
+                if (i === highlighted) node?.scrollIntoView({ block: 'nearest' })
+              }}
               tabIndex={-1}
               // Keep focus in the field, so picking doesn't count as leaving it.
               onMouseDown={(event) => event.preventDefault()}

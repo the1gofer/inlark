@@ -9,6 +9,10 @@ import { AccountMark } from './AccountMark'
 import { HintIconButton } from './HintIconButton'
 import { actionLimit } from './account-limits'
 import { useShortcutText } from './shortcuts'
+import { conversationDragType } from './split-drop'
+
+// Rows are dragged onto split tabs with a mouse; on touchscreens holding a row selects it instead.
+const canDrag = () => typeof matchMedia !== 'undefined' && matchMedia('(pointer: fine)').matches
 
 export function senderLabel(conversation: Conversation) {
   return conversation.from.map((sender) => sender.name || sender.email.split('@')[0]).join(', ')
@@ -81,6 +85,12 @@ export function ConversationRow({
         else onOpen()
       }}
       onMouseDown={onFocus}
+      draggable={canDrag()}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'link'
+        event.dataTransfer.setData(conversationDragType, c.key)
+        event.dataTransfer.setData('text/plain', subject)
+      }}
       onTouchStart={() => {
         held.current = false
         if (busy) return
