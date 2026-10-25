@@ -27,6 +27,8 @@ import {
   type MutationInput,
   type ServerSettings,
   type SubmissionSummary,
+  type Settings,
+  matchesSplitQuery,
 } from '@inlark/core'
 import { longDate } from './mail-date'
 import { version as packagedVersion } from '../../../package.json'
@@ -228,7 +230,27 @@ const listeners = new Set<(event: AppEvent) => void>()
 const changes = new Map<string, Message | null>()
 const undoStack = new Map<string, [string, Message | null | undefined][]>()
 const drafts = new Map<string, Draft>()
-let settings = { ...defaultSettings }
+let settings = {
+  ...defaultSettings,
+  splits: [
+    {
+      id: 'demo-team',
+      name: 'Team tools',
+      rules: [
+        { field: 'from', value: '@linear.app' },
+        { field: 'from', value: '@notion.so' },
+      ],
+    },
+    {
+      id: 'demo-reading',
+      name: 'Reading',
+      rules: [
+        { field: 'from', value: '@buttondown.email' },
+        { field: 'from', value: '@tm.openai.com' },
+      ],
+    },
+  ],
+} satisfies Settings as Settings
 const rights = {
   mayReadItems: true,
   mayAddItems: true,
@@ -344,7 +366,7 @@ function matches(m: Message, q: MailQuery): boolean {
   if (q.hasAttachment && !m.hasAttachment) return false
   if (q.after && m.receivedAt < q.after) return false
   if (q.before && m.receivedAt > q.before) return false
-  return true
+  return matchesSplitQuery(m, q)
 }
 const indexing = (account: Account) => !!account.indexing && !account.indexing.complete
 function changed() {

@@ -21,6 +21,9 @@ import {
   type MessageChanges,
   type OutgoingMessage,
   type SubmissionOutcome,
+  type SplitCondition,
+  addressPattern,
+  conditionsFor,
 } from '@inlark/core'
 
 export { draftFingerprint, parseUnsubscribe }
@@ -94,7 +97,19 @@ function batches<T>(items: T[], size: number): T[][] {
     result.push(items.slice(i, i + Math.max(1, size)))
   return result
 }
-export function jmapFilter(query: MailQuery, mailboxes: Mailbox[]): Json {
+/** A filter that matches nothing, for a split whose rules all belong to other accounts. */
+const NO_MATCH = { inMailbox: '__inlark_missing_mailbox__' }
+/** JMAP filters for split rules. The server matches text, so a domain is searched without `@`. */
+function splitFilters(conditions: SplitCondition[] | undefined, accountId?: string) {
+  const own = accountId ? conditionsFor(conditions, accountId) : conditions
+  return own?.flatMap((c): Json[] => {
+    if (c.field === 'subject') return [{ subject: c.value }]
+    const pattern = addressPattern(c.value)
+    const value = pattern.value
+    return c.field === 'from' ? [{ from: value }] : [{ to: value }, { cc: value }]
+  })
+}
+export function jmapFilter(query: MailQuery, mailboxes: Mailbox[], accountId?: string): Json {
   const role = (name: string) => mailboxes.find((m) => m.role === name)?.id
   const filters: Json[] = []
   if (query.mailboxId) filters.push({ inMailbox: query.mailboxId })
@@ -111,6 +126,10 @@ export function jmapFilter(query: MailQuery, mailboxes: Mailbox[]): Json {
   for (const key of ['text', 'from', 'to', 'subject', 'after', 'before'] as const)
     if (query[key]) filters.push({ [key]: query[key] })
   if (query.hasAttachment) filters.push({ hasAttachment: true })
+  const matchAny = splitFilters(query.matchAny, accountId)
+  if (matchAny) filters.push(matchAny.length ? { operator: 'OR', conditions: matchAny } : NO_MATCH)
+  const excludeAny = splitFilters(query.excludeAny, accountId)
+  if (excludeAny?.length) filters.push({ operator: 'NOT', conditions: excludeAny })
   return filters.length === 0
     ? {}
     : filters.length === 1
@@ -493,7 +512,7 @@ export class JmapProvider implements MailProvider {
         'Email/query',
         {
           accountId: account.remoteId,
-          filter: jmapFilter(query, boxes),
+          filter: jmapFilter(query, boxes, account.id),
           sort: [{ property: 'receivedAt', isAscending: false }],
           collapseThreads: true,
           position,

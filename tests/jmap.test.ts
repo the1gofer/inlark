@@ -211,6 +211,77 @@ describe('JMAP provider', () => {
     })
     expect(jmapFilter({ view: 'all' }, [])).toEqual({})
   })
+  it('filters split inbox queries with OR for matchAny and NOT for excludeAny', () => {
+    expect(
+      jmapFilter(
+        {
+          view: 'all',
+          matchAny: [
+            { field: 'from', value: '@example.com' },
+            { field: 'from', value: 'ada@example.org' },
+            { field: 'to', value: 'team' },
+            { field: 'subject', value: 'invoice' },
+          ],
+        },
+        [],
+      ),
+    ).toEqual({
+      operator: 'OR',
+      conditions: [
+        { from: 'example.com' },
+        { from: 'ada@example.org' },
+        { to: 'team' },
+        { cc: 'team' },
+        { subject: 'invoice' },
+      ],
+    })
+    expect(
+      jmapFilter({ view: 'all', excludeAny: [{ field: 'to', value: '@team.dev' }] }, []),
+    ).toEqual({
+      operator: 'NOT',
+      conditions: [{ to: 'team.dev' }, { cc: 'team.dev' }],
+    })
+    expect(
+      jmapFilter(
+        {
+          view: 'all',
+          text: 'x',
+          matchAny: [{ field: 'from', value: 'a' }],
+          excludeAny: [{ field: 'from', value: 'b' }],
+        },
+        [],
+      ),
+    ).toEqual({
+      operator: 'AND',
+      conditions: [
+        { text: 'x' },
+        { operator: 'OR', conditions: [{ from: 'a' }] },
+        { operator: 'NOT', conditions: [{ from: 'b' }] },
+      ],
+    })
+  })
+  it('scopes split conditions to the account and matches nothing when none apply', () => {
+    const query = {
+      view: 'all' as const,
+      matchAny: [
+        { field: 'from' as const, value: '@a.com', accountId: 'acc-1' },
+        { field: 'from' as const, value: '@b.com', accountId: 'acc-2' },
+        { field: 'from' as const, value: '@all.com' },
+      ],
+    }
+    expect(jmapFilter(query, [], 'acc-1')).toEqual({
+      operator: 'OR',
+      conditions: [{ from: 'a.com' }, { from: 'all.com' }],
+    })
+    expect(jmapFilter({ view: 'all', matchAny: [query.matchAny[1]!] }, [], 'acc-1')).toEqual({
+      inMailbox: '__inlark_missing_mailbox__',
+    })
+    // A split for another account cannot hide mail here.
+    expect(jmapFilter({ view: 'all', excludeAny: [query.matchAny[1]!] }, [], 'acc-1')).toEqual({})
+    expect(jmapFilter({ view: 'all', matchAny: [] }, [], 'acc-1')).toEqual({
+      inMailbox: '__inlark_missing_mailbox__',
+    })
+  })
   it('recovers an HTML body from nested MIME parts when htmlBody is empty', async () => {
     const { provider } = fixture({
       'Email/get': () => ({
