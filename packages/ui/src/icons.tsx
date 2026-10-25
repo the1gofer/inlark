@@ -52,6 +52,7 @@ import {
   Mail as MailGlyph,
   MailMinus01Icon as MailMinusGlyph,
   MailOpen as MailOpenGlyph,
+  Menu01Icon as MenuGlyph,
   Minus as MinusGlyph,
   Monitor as MonitorGlyph,
   Moon as MoonGlyph,
@@ -147,6 +148,7 @@ export const LockOpen = icon(LockOpenGlyph)
 export const Mail = icon(MailGlyph)
 export const MailMinus = icon(MailMinusGlyph)
 export const MailOpen = icon(MailOpenGlyph)
+export const Menu = icon(MenuGlyph)
 export const Minus = icon(MinusGlyph)
 export const Monitor = icon(MonitorGlyph)
 export const Moon = icon(MoonGlyph)

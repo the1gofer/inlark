@@ -1,0 +1,251 @@
+/*
+ * Phone layout, used by the self-hosted web version on narrow screens. The desktop app's window
+ * never gets this narrow, so it keeps its usual layout. These rules sit outside Tailwind's layers
+ * so they win over its utilities without needing !important.
+ */
+.compose-fab {
+  display: none;
+}
+@media (max-width: 640px) {
+  #root {
+    height: 100dvh;
+  }
+  /* iOS zooms into any field with text smaller than 16px. */
+  input,
+  select,
+  textarea,
+  [contenteditable='true'] {
+    font-size: max(16px, 1em);
+  }
+  /* Keyboard shortcut hints mean little on a touchscreen. */
+  .shortcut-keys {
+    display: none;
+  }
+
+  .app-shell.phone {
+    padding: 0;
+    --rail: 0px;
+    --row-height: 72px;
+  }
+  .app-shell.phone .main-content {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* The sidebar becomes a menu that slides in from the left. */
+  .app-shell.phone .sidebar {
+    position: fixed;
+    z-index: 60;
+    inset: 0 auto 0 0;
+    width: min(316px, 85vw);
+    padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom);
+    background: var(--sidebar);
+    border-right: 1px solid var(--border-strong);
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+  }
+  .app-shell.phone.drawer-open .sidebar {
+    transform: none;
+    box-shadow: 0 0 40px #0008;
+  }
+  .drawer-scrim {
+    position: fixed;
+    z-index: 59;
+    inset: 0;
+    background: #0009;
+  }
+  .app-shell.phone .sidebar-scroll {
+    overflow-y: auto;
+  }
+  .app-shell.phone .sidebar .nav-item {
+    height: 44px;
+    font-size: 15px;
+  }
+  .app-shell.phone .sidebar-footer > .button {
+    display: none;
+  }
+
+  /* List heading: menu button, title, then refresh, search and display options. */
+  .app-shell.phone .list-heading {
+    padding: calc(8px + env(safe-area-inset-top)) 6px 8px 4px;
+    gap: 2px;
+  }
+  .app-shell.phone .list-title {
+    flex: 1;
+    padding-left: 2px;
+  }
+  .app-shell.phone .list-heading .button-icon {
+    width: 44px;
+    height: 44px;
+  }
+  .app-shell.phone .list-toolbar {
+    padding-left: 12px;
+    padding-right: 8px;
+  }
+  .app-shell.phone .indexing-notice {
+    padding: 6px 16px;
+  }
+
+  /* Rows: two lines with bigger text, and no hover-only controls. */
+  .app-shell.phone .mail-row {
+    padding: 0 14px 0 8px;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  .app-shell.phone.density-comfortable .mail-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-rows: 24px 22px;
+  }
+  .app-shell.phone .row-selector {
+    width: 28px;
+    height: 100%;
+  }
+  .app-shell.phone .row-sender {
+    font-size: 15px;
+  }
+  .app-shell.phone .row-content {
+    font-size: 14px;
+  }
+  .app-shell.phone .row-quick-actions,
+  .app-shell.phone .footer-shortcuts {
+    display: none;
+  }
+  .app-shell.phone .list-footer {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .app-shell.phone .compose-fab {
+    position: absolute;
+    z-index: 5;
+    right: 16px;
+    bottom: calc(48px + env(safe-area-inset-bottom));
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 52px;
+    padding: 0 20px 0 16px;
+    border: 0;
+    border-radius: 16px;
+    background: var(--accent-solid);
+    color: #fff;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: 0 8px 24px #0006;
+  }
+
+  /* Selecting several: the actions run along the bottom edge. */
+  .app-shell.phone .selection-bar {
+    inset: auto 0 0 0;
+    max-width: none;
+    transform: none;
+    justify-content: space-between;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 0;
+    animation: none;
+  }
+  .app-shell.phone .selection-bar .button-icon {
+    width: 44px;
+    height: 44px;
+  }
+  .app-shell.phone .mail-list:has(.selected) {
+    padding-bottom: 96px;
+  }
+
+  /* Reading: back and next/previous stay on top, the conversation actions move to the bottom. */
+  .app-shell.phone .reader-toolbar {
+    padding: env(safe-area-inset-top) 6px 0 4px;
+    height: calc(52px + env(safe-area-inset-top));
+  }
+  .app-shell.phone .reader-toolbar > .toolbar-divider:first-of-type {
+    display: none;
+  }
+  .app-shell.phone .reader-back span {
+    display: inline;
+  }
+  .app-shell.phone .reader-toolbar .button-icon {
+    width: 44px;
+    height: 44px;
+  }
+  .app-shell.phone .reader-actions {
+    position: absolute;
+    z-index: 5;
+    inset: auto 0 0 0;
+    display: flex;
+    justify-content: space-around;
+    padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+    background: var(--sidebar);
+    border-top: 1px solid var(--border-strong);
+  }
+  .app-shell.phone .reader-actions .button-icon {
+    width: 52px;
+    height: 48px;
+  }
+  .app-shell.phone .reader-scroll {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+
+  .app-shell.phone .toast {
+    bottom: calc(112px + env(safe-area-inset-bottom));
+  }
+
+  /* The composer fills the screen. */
+  .composer,
+  .composer.composer-expanded {
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    transform: none;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Settings fill the screen, with the sections as a row of tabs along the top. */
+  .settings-modal {
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    transform: none;
+  }
+  .settings-modal > .modal-heading {
+    padding-top: calc(14px + env(safe-area-inset-top));
+  }
+  .settings-layout {
+    flex-direction: column;
+    height: 100%;
+  }
+  .settings-nav {
+    width: auto;
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    padding: calc(52px + env(safe-area-inset-top)) 12px 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-nav button {
+    flex-shrink: 0;
+    height: 40px;
+    padding: 0 12px;
+    font-size: 14px;
+  }
+  .settings-content {
+    padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  .setting-row {
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+  .setting-select {
+    width: 100%;
+    min-width: 0;
+  }
+}

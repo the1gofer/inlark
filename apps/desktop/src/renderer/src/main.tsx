@@ -15,6 +15,7 @@ import { App } from './App'
 import { ShortcutsProvider } from './ShortcutsProvider'
 import '@inlark/ui/styles.css'
 import './styles.css'
+import './mobile.css'
 
 export interface RouteSearch {
   view?: string
