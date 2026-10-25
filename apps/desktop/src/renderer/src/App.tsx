@@ -47,6 +47,7 @@ import {
   Lock,
   LockOpen,
   LockKeyhole,
+  Layers,
 } from '@inlark/ui/icons'
 import { Button, Checkbox, Dropdown, MenuItem, IconButton, EmptyState, Spinner } from '@inlark/ui'
 import {
@@ -58,6 +59,9 @@ import {
   mailtoDraft,
   replyRecipients,
   replyTarget,
+  splitForSender,
+  splitQuery,
+  visibleSplits,
   type Address,
   type Bootstrap,
   type Conversation,
@@ -68,6 +72,7 @@ import {
   type Message,
   type MutationTarget,
   type QueryPage,
+  type Split,
   type SubmissionSummary,
   type UpdateStatus,
   type View,
@@ -170,7 +175,8 @@ export function App() {
   const encryption = useEncryption()
   const [unlock, unlockDialog] = useUnlock()
   const [settingsOpen, setSettingsOpen] = useState(false),
-    [settingsTab, setSettingsTab] = useState('general')
+    [settingsTab, setSettingsTab] = useState('general'),
+    [splitDraft, setSplitDraft] = useState<Split>()
   const [composer, setComposer] = useState<Draft>(),
     [paletteOpen, setPaletteOpen] = useState(false),
     [help, setHelp] = useState(false)
@@ -249,17 +255,45 @@ export function App() {
       ),
   })
   const currentFolder = boxes.data?.find((b) => b.id === route.folder)
+  // A remembered location can name an account that was removed since; show all mail instead.
+  const queryAccount = accounts.some((a) => a.id === route.account) ? route.account : undefined
+  // Split tabs divide the inbox itself; folders, other views and searches show everything.
+  const splits = useMemo(
+      () =>
+        view === 'inbox' && !route.q && !route.folder
+          ? visibleSplits(settings.splits, queryAccount)
+          : [],
+      [view, route.q, route.folder, settings.splits, queryAccount],
+    ),
+    activeSplit = splits.find((s) => s.id === route.split)
   const query: MailQuery = useMemo(
     () => ({
       view: route.q ? 'all' : view,
-      // A remembered location can name an account that was removed since; show all mail instead.
-      accountId: accounts.some((a) => a.id === route.account) ? route.account : undefined,
+      accountId: queryAccount,
       mailboxId: route.folder,
       text: route.q || undefined,
+      ...(splits.length ? splitQuery(splits, activeSplit) : {}),
       ...filters,
     }),
-    [view, route.account, route.folder, route.q, filters, accounts],
+    [view, queryAccount, route.folder, route.q, filters, splits, activeSplit],
   )
+  // Unread conversations in each tab: the main Inbox tab first, then each split.
+  const splitUnread = useQueries({
+    queries: (splits.length ? [undefined, ...splits] : []).map((split) => {
+      const counted: MailQuery = {
+        view: 'inbox',
+        accountId: queryAccount,
+        unread: true,
+        ...splitQuery(splits, split),
+      }
+      return {
+        queryKey: ['split-counts', counted],
+        queryFn: async () => (await api.query(counted)).total,
+        enabled: accounts.length > 0,
+      }
+    }),
+    combine: (results) => results.map((result) => result.data || 0),
+  })
   const queryId = JSON.stringify(query)
   useEffect(() => {
     setSelected(new Set())
@@ -386,7 +420,7 @@ export function App() {
           .map((c) => ({ accountId: c.accountId, threadId: c.id }))
   const refresh = async () => {
     await Promise.all(
-      ['mail', 'thread', 'mailboxes', 'drafts', 'submissions'].map((key) =>
+      ['mail', 'thread', 'mailboxes', 'drafts', 'submissions', 'split-counts'].map((key) =>
         queryClient.invalidateQueries({ queryKey: [key] }),
       ),
     )
@@ -820,12 +854,17 @@ export function App() {
     try {
       localStorage.setItem(
         'last-location',
-        JSON.stringify({ view: route.view, account: route.account, folder: route.folder }),
+        JSON.stringify({
+          view: route.view,
+          account: route.account,
+          folder: route.folder,
+          split: route.split,
+        }),
       )
     } catch {
       /* Remembering the location is a convenience only. */
     }
-  }, [route.view, route.account, route.folder])
+  }, [route.view, route.account, route.folder, route.split])
   useEffect(() => {
     const key = route.threadAccount + ':' + route.thread
     if (
@@ -933,9 +972,23 @@ export function App() {
       fail(e)
     }
   }
-  const openSettings = (tab = 'general') => {
+  const openSettings = (tab = 'general', draft?: Split) => {
     setSettingsTab(tab)
+    setSplitDraft(draft)
     setSettingsOpen(true)
+  }
+  /** Shows one split tab, or the main Inbox tab without a split; in the same account. */
+  const showSplit = (split?: Split) =>
+    go({ view: 'inbox', ...(route.account ? { account: route.account } : {}), split: split?.id })
+  const stepSplit = (by: number) => {
+    const tabs = [undefined, ...splits]
+    const index = tabs.indexOf(activeSplit)
+    showSplit(tabs[(index + by + tabs.length) % tabs.length])
+  }
+  /** Starts a split for the sender of the open conversation, in Settings to name and refine. */
+  const splitSender = () => {
+    const sender = latest?.from[0]
+    if (sender) openSettings('splits', splitForSender(sender, queryAccount))
   }
   const focusSearch = () => {
     setSearchOpen(true)
@@ -1025,6 +1078,9 @@ export function App() {
       },
       filter: { run: () => setFilterOpen(true), enabled: inMailList },
       toggleUnread: { run: toggleUnread, enabled: inMailList },
+      // Tab moves between split tabs only where they show; elsewhere it moves focus as usual.
+      nextSplit: { run: () => stepSplit(1), enabled: inMailList && !!splits.length },
+      previousSplit: { run: () => stepSplit(-1), enabled: inMailList && !!splits.length },
       toggleDensity: { run: toggleDensity, enabled: inMailList },
       createFolder: { run: createFolder, enabled: !blocked && !!accounts.length },
       next: { run: () => step(1) },
@@ -1331,6 +1387,34 @@ export function App() {
       keywords: 'go open view',
       run: () => go({ view: 'all' }),
     },
+    ...visibleSplits(settings.splits, queryAccount).map((split) => ({
+      id: 'split-' + split.id,
+      group: 'Go to',
+      label: split.name,
+      icon: Layers,
+      keywords: 'go open split inbox tab',
+      run: () => showSplit(split),
+    })),
+    ...(route.thread && latest?.from[0]
+      ? [
+          {
+            id: 'split-sender',
+            group: 'Mail',
+            label: 'Split inbox for ' + (latest.from[0].name || latest.from[0].email) + '…',
+            icon: Layers,
+            keywords: 'split inbox tab sender filter',
+            run: splitSender,
+          },
+        ]
+      : []),
+    {
+      id: 'split-settings',
+      group: 'Preferences',
+      label: 'Edit split inbox…',
+      icon: Layers,
+      keywords: 'split inbox tabs filters settings',
+      run: () => openSettings('splits'),
+    },
     ...(accounts.length > 1
       ? [
           {
@@ -1483,7 +1567,10 @@ export function App() {
   )
   const title = route.q
     ? 'Search results'
-    : currentFolder?.name || views.find((v) => v.id === view)?.title || 'All mail'
+    : activeSplit?.name ||
+      currentFolder?.name ||
+      views.find((v) => v.id === view)?.title ||
+      'All mail'
   const hasFilters = Object.values(filters).some(Boolean)
   // The Unread tab is a filter too, but an empty Unread list isn't a failed search.
   const hasSearchFilters = Object.entries(filters).some(([key, value]) => key !== 'unread' && value)
@@ -1633,6 +1720,7 @@ export function App() {
               loading={thread.isPlaceholderData}
               onAction={(action) => void act(action)}
               onMove={() => openMove(targets())}
+              onSplitSender={splitSender}
               onReply={(message, kind) => void compose(message, kind)}
               onEditDraft={(message) => void openDraft(threadDraft(message))}
               onDiscardDraft={(message) => {
@@ -1871,6 +1959,59 @@ export function App() {
                   Clear all
                 </button>
               </div>
+            )}
+            {!!splits.length && (
+              <nav
+                className={cn(
+                  'split-tabs flex items-center gap-1.5 pt-0 pb-3 px-7 overflow-x-auto shrink-0 [scrollbar-width:none]',
+                  '[&::-webkit-scrollbar]:hidden snap-x @max-[900px]/mail:px-5.5 @max-[680px]/mail:px-5',
+                )}
+                aria-label="Split inbox"
+              >
+                {[undefined, ...splits].map((split, index) => {
+                  const active = split === activeSplit
+                  const unread = splitUnread[index] || 0
+                  return (
+                    <button
+                      key={split?.id || 'inbox'}
+                      ref={(node) => {
+                        if (active) node?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+                      }}
+                      aria-current={active ? 'page' : undefined}
+                      title={
+                        index === 0
+                          ? 'Everything your splits leave in the inbox'
+                          : 'Mail matching ' + split!.name
+                      }
+                      className={cn(
+                        'split-tab inline-flex items-center gap-1.5 shrink-0 snap-start h-7 py-0 px-2.75 rounded-md border',
+                        'border-solid border-border bg-transparent text-[12px] text-secondary whitespace-nowrap',
+                        'transition-[color,background,border-color] duration-120 hover:bg-hover hover:text-foreground',
+                        active &&
+                          'active bg-selected border-border-strong text-strong font-medium hover:bg-selected',
+                      )}
+                      onClick={() => showSplit(split)}
+                    >
+                      {split ? split.name : 'Inbox'}
+                      {!!unread && (
+                        <span
+                          className="split-unread text-[11px] tabular-nums text-muted font-normal"
+                          aria-label={unread.toLocaleString() + ' unread'}
+                        >
+                          {unread >= 1000 ? '999+' : unread.toLocaleString()}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+                <IconButton
+                  className="shrink-0"
+                  label="Edit split inbox"
+                  onClick={() => openSettings('splits')}
+                >
+                  <Plus size={14} />
+                </IconButton>
+              </nav>
             )}
             {view !== 'drafts' && (
               <div
@@ -2490,6 +2631,7 @@ export function App() {
             }
             notify={notify}
             initialTab={settingsTab}
+            splitDraft={splitDraft}
           />
         )}
       </Suspense>

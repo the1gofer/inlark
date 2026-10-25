@@ -19,6 +19,7 @@ import {
   SquarePen,
   Keyboard,
   LockKeyhole,
+  Layers,
 } from '@inlark/ui/icons'
 import { Button, Dropdown, EmptyState, MenuItem, Modal, Select, Switch } from '@inlark/ui'
 import {
@@ -26,6 +27,7 @@ import {
   type Account,
   type AccountAppearance,
   type Settings as Preferences,
+  type Split,
   type Bootstrap,
 } from '@inlark/core'
 import { api } from './api'
@@ -37,6 +39,7 @@ import { FolderMappingsDialog } from './FolderMappings'
 import { AliasesDialog } from './Aliases'
 import { IndexingMeter } from './IndexingMeter'
 import { ShortcutEditor } from './ShortcutEditor'
+import { SplitSettings } from './SplitSettings'
 import { EncryptionPanel } from './EncryptionSettings'
 import { newMessageAccount } from './compose-account'
 
@@ -158,6 +161,7 @@ export function SettingsPanel({
   onChange,
   notify,
   initialTab = 'general',
+  splitDraft,
 }: {
   open: boolean
   onClose: () => void
@@ -165,6 +169,8 @@ export function SettingsPanel({
   onChange: (settings: Preferences) => void
   notify: (message: string, tone?: 'error' | 'info') => void
   initialTab?: string
+  /** A new split to start editing, such as one made from a sender. */
+  splitDraft?: Split
 }) {
   // With nothing connected yet, opening Accounts can only mean adding one.
   const initialSetup = (): { mode: SetupMode } | undefined =>
@@ -254,6 +260,7 @@ export function SettingsPanel({
               ['general', 'General', SlidersHorizontal],
               ['accounts', 'Accounts', Mail],
               ['signatures', 'Signatures', PenLine],
+              ['splits', 'Split inbox', Layers],
               ['encryption', 'Encryption', LockKeyhole],
               ['shortcuts', 'Shortcuts', Keyboard],
               ['about', 'About', Info],
@@ -806,6 +813,23 @@ export function SettingsPanel({
                   </div>
                 </>
               ))}
+            {tab === 'splits' && (
+              <>
+                <h3 className="m-0 text-[20px] font-[550] tracking-[-0.5px]">Split inbox</h3>
+                <p className="settings-lead text-muted mt-1.5 mb-6 mx-0 text-[12px] leading-[1.6]">
+                  Give the mail you get most, such as one sender, a whole domain or an alias, its
+                  own tab above the inbox. The Inbox tab keeps everything else. Your mail stays in
+                  the same folders on the server.
+                </p>
+                <SplitSettings
+                  key={splitDraft?.id}
+                  accounts={bootstrap.accounts}
+                  splits={bootstrap.settings.splits || []}
+                  draft={splitDraft}
+                  onSave={(splits) => update({ splits })}
+                />
+              </>
+            )}
             {tab === 'shortcuts' && (
               <>
                 <h3 className="m-0 text-[20px] font-[550] tracking-[-0.5px]">Keyboard shortcuts</h3>

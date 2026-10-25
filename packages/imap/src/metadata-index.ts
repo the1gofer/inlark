@@ -1,4 +1,4 @@
-import type { Address } from '@inlark/core'
+import type { Address, SplitRule } from '@inlark/core'
 
 /**
  * Persistent IMAP metadata, injected into the provider. The desktop app implements this with
@@ -183,6 +183,9 @@ export interface ConversationFilter {
   /** ISO dates, inclusive lower and exclusive upper bound on `receivedAt`. */
   after?: string
   before?: string
+  /** Split inbox rules: only messages matching one of `matchAny`, and none of `excludeAny`. */
+  matchAny?: SplitRule[]
+  excludeAny?: SplitRule[]
 }
 
 export interface ConversationCursor {

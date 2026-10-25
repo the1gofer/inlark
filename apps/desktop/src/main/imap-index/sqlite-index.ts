@@ -2,6 +2,9 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlit
 import { chmodSync, closeSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import type { SplitRule } from '@inlark/core'
+// The splits module alone: the worker runs without a build step, and the rest of core needs one.
+import { addressPattern, normalizeSplitValue } from '@inlark/core/splits'
 import type {
   ConversationCursor,
   ConversationFilter,
@@ -208,6 +211,38 @@ function time(value: string) {
 
 const json = (value: unknown) => JSON.stringify(value)
 const list = (values: readonly unknown[]) => JSON.stringify(values)
+/** A LIKE pattern that finds `value` literally, with `\\` as the escape character. */
+const literal = (value: string) => value.replace(/[\\%_]/g, '\\$&')
+const containing = (value: string) => '%' + literal(value) + '%'
+/** SQL for one split rule, matched like `conditionMatches` in `@inlark/core`. */
+function splitRuleSql(rule: SplitRule, params: SQLInputValue[]): string {
+  if (rule.field === 'subject') {
+    params.push(containing(normalizeSplitValue(rule.value)))
+    return "lower(m.subject) LIKE ? ESCAPE '\\'"
+  }
+  const pattern = addressPattern(rule.value)
+  const email = "lower(json_extract(a.value, '$.email'))"
+  let test: string
+  if (pattern.kind === 'domain') {
+    test = `${email} LIKE ? ESCAPE '\\' OR ${email} LIKE ? ESCAPE '\\'`
+  } else if (pattern.kind === 'address') test = `${email} = ?`
+  else
+    test = `${email} LIKE ? ESCAPE '\\' OR lower(coalesce(json_extract(a.value, '$.name'), '')) LIKE ? ESCAPE '\\'`
+  const columns = rule.field === 'from' ? ['m.from_addr'] : ['m.to_addr', 'm.cc_addr']
+  return (
+    '(' +
+    columns
+      .map((column) => {
+        if (pattern.kind === 'domain')
+          params.push('%@' + literal(pattern.value), '%.' + literal(pattern.value))
+        else if (pattern.kind === 'address') params.push(pattern.value)
+        else params.push(containing(pattern.value), containing(pattern.value))
+        return `EXISTS (SELECT 1 FROM json_each(${column}) a WHERE ${test})`
+      })
+      .join(' OR ') +
+    ')'
+  )
+}
 
 function toMailbox(row: MailboxRow): IndexedMailbox {
   return {
@@ -890,6 +925,14 @@ export class SqliteMetadataIndex implements SyncMetadataIndex {
       where.push('m.received_ms < ?')
       params.push(time(filter.before))
     }
+    if (filter.matchAny) {
+      if (!filter.matchAny.length) return null
+      where.push('(' + filter.matchAny.map((rule) => splitRuleSql(rule, params)).join(' OR ') + ')')
+    }
+    if (filter.excludeAny?.length)
+      where.push(
+        'NOT (' + filter.excludeAny.map((rule) => splitRuleSql(rule, params)).join(' OR ') + ')',
+      )
     // With a single max() aggregate, SQLite takes the bare `seq` from the row holding the max.
     return {
       sql: `SELECT m.thread_id AS t, max(m.received_ms) AS r, m.seq AS s FROM ${from}

@@ -32,6 +32,7 @@ import {
   Lock,
   Copy,
   ExternalLink,
+  Layers,
 } from '@inlark/ui/icons'
 import { Tooltip } from '@base-ui/react/tooltip'
 import { Button, IconButton, Dropdown, MenuItem, Spinner } from '@inlark/ui'
@@ -621,6 +622,8 @@ interface ReaderProps {
   position?: string
   onAction: (action: MailAction) => void
   onMove: () => void
+  /** Starts a split inbox tab for the conversation's sender. */
+  onSplitSender?: () => void
   onReply: (message: Message, kind: 'reply' | 'replyAll' | 'forward') => void
   onEditDraft: (message: Message) => void
   onDiscardDraft: (message: Message) => void
@@ -710,6 +713,7 @@ export function Reader({
   position,
   onAction,
   onMove,
+  onSplitSender,
   onReply,
   onEditDraft,
   onDiscardDraft,
@@ -875,6 +879,12 @@ export function Reader({
                 <Inbox size={14} />
                 Restore to inbox
                 <ShortcutHint id="restore" className="menu-shortcut ml-auto" />
+              </MenuItem>
+            )}
+            {onSplitSender && (
+              <MenuItem onClick={onSplitSender}>
+                <Layers size={14} />
+                Split inbox for this sender
               </MenuItem>
             )}
             {offersAction(view, 'destroy') && (

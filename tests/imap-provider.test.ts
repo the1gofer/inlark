@@ -198,6 +198,27 @@ describe('IMAP indexing and reading', () => {
     expect(updated.failures).toEqual([])
     expect(updated.updated).toHaveLength(5)
   })
+  it('applies split conditions without an account and skips those for other accounts', async () => {
+    server.deliver('INBOX', { messageId: 'a@x', from: [alex], date: at(1), text: 'From Alex' })
+    server.deliver('INBOX', { messageId: 'b@x', from: [me], date: at(2), text: 'From me' })
+    const p = await connected()
+    await sync(p)
+    const senders = async (query: Parameters<typeof p.query>[1]) =>
+      (await p.query(account, query)).items.map((c) => c.from[0]!.email)
+    const alexRule = { field: 'from' as const, value: '@example.org' }
+    expect(await senders({ view: 'inbox', matchAny: [alexRule] })).toEqual([alex.email])
+    expect(
+      await senders({ view: 'inbox', matchAny: [{ ...alexRule, accountId: account.id }] }),
+    ).toEqual([alex.email])
+    expect(
+      await senders({ view: 'inbox', matchAny: [{ ...alexRule, accountId: 'other-account' }] }),
+    ).toEqual([])
+    expect(await senders({ view: 'inbox', excludeAny: [alexRule] })).toEqual([me.email])
+    // An exclusion that belongs to another account hides nothing here.
+    expect(
+      await senders({ view: 'inbox', excludeAny: [{ ...alexRule, accountId: 'other-account' }] }),
+    ).toEqual([me.email, alex.email])
+  })
   it('deduplicates by server identity when Message-ID is absent and preserves distinct emails', async () => {
     const same = { emailId: '123', subject: 'No header ID', date: at(1), text: 'One email' }
     server.deliver('INBOX', same)
