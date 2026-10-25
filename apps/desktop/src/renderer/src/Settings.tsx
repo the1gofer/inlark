@@ -416,6 +416,26 @@ export function SettingsPanel({
                       onValueChange={(value) => void update({ undoSendSeconds: Number(value) })}
                     />
                   </div>
+                  <div
+                    className={cn(
+                      'setting-row flex items-center justify-between my-3.5 mx-0 gap-6 [&_strong]:font-normal [&_p]:text-muted',
+                      '[&_p]:my-[3px] [&_p]:mx-0 [&_input]:shrink-0 [&>.button]:shrink-0 [&_p]:text-[12px] [&_p]:leading-[1.6]',
+                      '[&_strong]:text-[13px] max-[700px]:gap-3.5',
+                    )}
+                  >
+                    <div>
+                      <strong>Archive when you reply</strong>
+                      <p>
+                        A conversation leaves the inbox once your reply is sent. A new reply brings
+                        it back.
+                      </p>
+                    </div>
+                    <Switch
+                      aria-label="Archive when you reply"
+                      checked={bootstrap.settings.archiveOnReply !== false}
+                      onCheckedChange={(archiveOnReply) => void update({ archiveOnReply })}
+                    />
+                  </div>
                 </div>
                 <div
                   className={cn(

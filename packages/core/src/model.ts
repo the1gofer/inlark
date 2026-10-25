@@ -278,6 +278,8 @@ export interface Settings {
   shortcuts?: Record<string, string[][]>
   /** Seconds a sent message waits before it leaves, so it can be undone. 0 sends at once. */
   undoSendSeconds?: number
+  /** Move a conversation out of the inbox once your reply to it is sent. On unless false. */
+  archiveOnReply?: boolean
   /** Saved text to insert while writing. `{first_name}` becomes the first recipient's first name. */
   snippets?: Snippet[]
   /** Split inbox tabs, in the order they are shown. */

@@ -223,6 +223,7 @@ export const settingsSchema = z.object({
     .record(z.string().max(64), z.array(z.array(z.string().min(1).max(64)).min(1).max(4)).max(16))
     .optional(),
   undoSendSeconds: z.number().int().min(0).max(60).optional(),
+  archiveOnReply: z.boolean().optional(),
   snippets: z
     .array(
       z.object({
