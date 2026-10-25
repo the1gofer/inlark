@@ -138,6 +138,7 @@ import {
 import { conversationDragType, setConversationDragImage } from './split-drop'
 import { laterLabel } from './later'
 import { RemindDialog, RemindersDialog } from './Reminders'
+import { rankContacts } from './mentions'
 import { introRecipients } from './intro'
 import { version as packagedVersion } from '../../../package.json'
 const Composer = lazy(() => import('./Composer').then((m) => ({ default: m.Composer })))
@@ -1375,23 +1376,19 @@ export function App() {
     },
     !blocked,
   )
-  const suggestions = useMemo(() => {
-    // People you hear from most come first; your own addresses never appear.
-    const own = new Set(accounts.map((a) => a.email.toLowerCase()))
-    const seen = new Map<string, { address: Address; count: number }>()
-    for (const c of conversations)
-      for (const m of c.messages)
-        for (const address of [...m.from, ...m.to, ...m.cc]) {
-          const key = address.email.toLowerCase()
-          if (own.has(key)) continue
-          const entry = seen.get(key)
-          if (entry) {
-            entry.count++
-            if (!entry.address.name && address.name) entry.address = address
-          } else seen.set(key, { address, count: 1 })
-        }
-    return [...seen.values()].sort((a, b) => b.count - a.count).map((entry) => entry.address)
-  }, [conversations, accounts])
+  const suggestions = useMemo(
+    () =>
+      rankContacts(
+        conversations,
+        new Set(
+          accounts.flatMap((a) => [
+            a.email.toLowerCase(),
+            ...(a.aliases || []).map((alias) => alias.email.toLowerCase()),
+          ]),
+        ),
+      ),
+    [conversations, accounts],
+  )
   const savePreferences = async (patch: Partial<typeof settings>) => {
     try {
       const next = await api.settings({ ...settings, ...patch })

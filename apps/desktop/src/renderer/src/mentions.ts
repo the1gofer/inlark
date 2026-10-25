@@ -1,5 +1,5 @@
 import { Node, mergeAttributes, type Editor } from '@tiptap/react'
-import type { Address } from '@inlark/core'
+import type { Address, Conversation } from '@inlark/core'
 
 const same = (a: Address, b: Address) => a.email.toLowerCase() === b.email.toLowerCase()
 
@@ -28,6 +28,29 @@ export function matchAddresses(
           (q.length > 2 && ((a.name || '') + ' ' + a.email).toLowerCase().includes(q))),
     )
     .slice(0, limit)
+}
+
+/** Everyone in these conversations, people you hear from most first, never your own addresses. */
+export function rankContacts(conversations: Conversation[], own: Set<string>): Address[] {
+  const seen = new Map<string, { address: Address; count: number }>()
+  for (const c of conversations)
+    for (const m of c.messages)
+      for (const address of [...m.from, ...m.to, ...m.cc]) {
+        const key = address.email.toLowerCase()
+        if (!key || own.has(key)) continue
+        const entry = seen.get(key)
+        if (entry) {
+          entry.count++
+          if (!entry.address.name && address.name) entry.address = address
+        } else seen.set(key, { address, count: 1 })
+      }
+  return [...seen.values()].sort((a, b) => b.count - a.count).map((entry) => entry.address)
+}
+
+/** `known` followed by anyone in `more` it doesn't already have. */
+export function mergeContacts(known: Address[], more: Address[]): Address[] {
+  const emails = new Set(known.map((a) => a.email.toLowerCase()))
+  return [...known, ...more.filter((a) => !emails.has(a.email.toLowerCase()))]
 }
 
 /**

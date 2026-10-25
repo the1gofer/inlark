@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { Editor, type JSONContent } from '../apps/desktop/node_modules/@tiptap/react'
 import StarterKit from '../apps/desktop/node_modules/@tiptap/starter-kit'
-import type { Address } from '../packages/core/src'
+import type { Address, Conversation } from '../packages/core/src'
 import {
   MentionNode,
   matchAddresses,
   mentionLabel,
   mentionQuery,
+  mergeContacts,
+  rankContacts,
 } from '../apps/desktop/src/renderer/src/mentions'
 
 const people: Address[] = [
@@ -90,5 +92,29 @@ describe('mentions', () => {
     } finally {
       editor.destroy()
     }
+  })
+})
+
+describe('contacts', () => {
+  const message = (from: Address[], to: Address[], cc: Address[] = []) => ({ from, to, cc })
+  const conversation = (...messages: ReturnType<typeof message>[]) =>
+    ({ messages }) as unknown as Conversation
+
+  it('ranks people by how often they appear and skips your own addresses', () => {
+    const me = { name: 'Me', email: 'me@example.com' }
+    const megan = { name: 'Megan Ray', email: 'megan@example.com' }
+    const ranked = rankContacts(
+      [
+        conversation(message([{ email: 'megan@example.com' }], [me])),
+        conversation(message([me], [megan, people[0]]), message([megan], [me])),
+      ],
+      new Set(['me@example.com']),
+    )
+    expect(ranked).toEqual([megan, people[0]])
+  })
+
+  it('keeps the people already known first when merging in more', () => {
+    const megan = { name: 'Megan Ray', email: 'megan@example.com' }
+    expect(mergeContacts(people, [{ email: 'ANN@example.com' }, megan])).toEqual([...people, megan])
   })
 })
