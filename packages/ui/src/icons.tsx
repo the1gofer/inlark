@@ -45,6 +45,7 @@ import {
   Italic as ItalicGlyph,
   Keyboard as KeyboardGlyph,
   Key01Icon as KeyGlyph,
+  Layers01Icon as LayersGlyph,
   LaptopIcon as LaptopGlyph,
   LaptopPhoneSyncIcon as DeviceSyncGlyph,
   Link2 as Link2Glyph,
@@ -144,6 +145,7 @@ export const Inbox = icon(InboxGlyph)
 export const Info = icon(InfoGlyph)
 export const Italic = icon(ItalicGlyph)
 export const Keyboard = icon(KeyboardGlyph)
+export const Layers = icon(LayersGlyph)
 export const Key = icon(KeyGlyph)
 export const Laptop = icon(LaptopGlyph)
 export const DeviceSync = icon(DeviceSyncGlyph)

@@ -24,6 +24,8 @@ export interface RouteSearch {
   thread?: string
   threadAccount?: string
   q?: string
+  /** The split inbox tab being shown. */
+  split?: string
 }
 const rootRoute = createRootRoute()
 const indexRoute = createRoute({
@@ -33,7 +35,7 @@ const indexRoute = createRoute({
     Object.fromEntries(
       Object.entries(input).filter(
         ([key, value]) =>
-          ['view', 'account', 'folder', 'thread', 'threadAccount', 'q'].includes(key) &&
+          ['view', 'account', 'folder', 'thread', 'threadAccount', 'q', 'split'].includes(key) &&
           typeof value === 'string',
       ),
     ),
@@ -48,7 +50,8 @@ if (!location.hash || location.hash === '#/') {
     const saved = JSON.parse(localStorage.getItem('last-location') || 'null') as RouteSearch | null
     const search = Object.fromEntries(
       Object.entries(saved || {}).filter(
-        ([key, value]) => ['view', 'account', 'folder'].includes(key) && typeof value === 'string',
+        ([key, value]) =>
+          ['view', 'account', 'folder', 'split'].includes(key) && typeof value === 'string',
       ),
     )
     if (Object.keys(search).length) void router.navigate({ to: '/', search, replace: true })

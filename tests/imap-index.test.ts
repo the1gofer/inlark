@@ -341,6 +341,64 @@ describe('SQLite metadata index', () => {
     expect(offset.total).toBe(4)
   })
 
+  it('filters conversations by split rules', async () => {
+    const { INBOX } = await mailboxes()
+    const person = (email: string, name = '') => ({ name, email })
+    await index.upsertMessages('a', [
+      message(INBOX!, 1, { from: [person('a@example.com')] }),
+      message(INBOX!, 2, { from: [person('b@mail.example.com')] }),
+      message(INBOX!, 3, { from: [person('c@notexample.com')] }),
+      message(INBOX!, 4, { from: [person('Ada@Home.org', 'Ada Lovelace')] }),
+      message(INBOX!, 5, {
+        from: [person('z@z.net')],
+        to: [person('x@team.dev')],
+        subject: 'Weekly DIGEST',
+      }),
+      message(INBOX!, 6, {
+        from: [person('z@z.net')],
+        cc: [person('y@team.dev')],
+        subject: 'Hello',
+      }),
+      message(INBOX!, 7, { from: [person('p@x.com')], subject: '100% done_ok' }),
+      message(INBOX!, 8, { from: [person('p@x.com')], subject: '100x doneXok' }),
+    ])
+    const uids = async (filter: Parameters<MetadataIndex['conversations']>[1]) =>
+      (await index.conversations('a', filter, { limit: 50 })).items.map((i) => i.latest.uid)
+    const from = (value: string) => ({ field: 'from' as const, value })
+    expect(await uids({ matchAny: [from('@example.com')] })).toEqual([2, 1])
+    expect(await uids({ matchAny: [from('@Example.com')] })).toEqual([2, 1])
+    expect(await uids({ matchAny: [from('ADA@home.ORG')] })).toEqual([4])
+    expect(await uids({ matchAny: [from('b@example.com')] })).toEqual([])
+    expect(await uids({ matchAny: [from('lovelace')] })).toEqual([4])
+    expect(await uids({ matchAny: [from('notexample')] })).toEqual([3])
+    expect(await uids({ matchAny: [from('@example.com'), from('lovelace')] })).toEqual([4, 2, 1])
+    expect(await uids({ matchAny: [{ field: 'to', value: '@team.dev' }] })).toEqual([6, 5])
+    expect(await uids({ matchAny: [{ field: 'to', value: 'y@team.dev' }] })).toEqual([6])
+    expect(await uids({ matchAny: [{ field: 'subject', value: 'digest' }] })).toEqual([5])
+    // To rules look at recipients only, not the sender.
+    expect(await uids({ matchAny: [{ field: 'to', value: 'ada' }] })).toEqual([])
+    expect(await uids({ excludeAny: [from('@example.com'), from('home.org')] })).toEqual([
+      8, 7, 6, 5, 3,
+    ])
+    expect(
+      await uids({
+        matchAny: [from('@example.com'), from('home.org')],
+        excludeAny: [from('b@mail.example.com')],
+      }),
+    ).toEqual([4, 1])
+    expect(await uids({ excludeAny: [] })).toEqual([8, 7, 6, 5, 4, 3, 2, 1])
+    expect(await uids({ matchAny: [] })).toEqual([])
+    const page = await index.conversations('a', { matchAny: [] }, { limit: 50 })
+    expect(page.total).toBe(0)
+    // LIKE wildcards in a value are plain characters.
+    expect(await uids({ matchAny: [{ field: 'subject', value: '100%' }] })).toEqual([7])
+    expect(await uids({ matchAny: [{ field: 'subject', value: 'done_ok' }] })).toEqual([7])
+    expect(await uids({ matchAny: [{ field: 'subject', value: '%' }] })).toEqual([7])
+    expect(await uids({ matchAny: [{ field: 'subject', value: '_' }] })).toEqual([7])
+    expect(await uids({ matchAny: [from('_@x.com')] })).toEqual([])
+    expect(await uids({ matchAny: [from('@%.com')] })).toEqual([])
+    expect(await uids({ matchAny: [from('p_x.com')] })).toEqual([])
+  })
   it('pages with a keyset that ignores rows indexed between pages', async () => {
     const { INBOX } = await mailboxes()
     const batch: NewMessage[] = []

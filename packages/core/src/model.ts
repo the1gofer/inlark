@@ -182,6 +182,31 @@ export interface MailQuery {
   before?: string
   hasAttachment?: boolean
   unread?: boolean
+  /** Only mail matching at least one of these, as in a split inbox tab. */
+  matchAny?: SplitCondition[]
+  /** Never mail matching any of these, as in the inbox tab that other splits leave behind. */
+  excludeAny?: SplitCondition[]
+}
+/** One thing a split looks for: a sender, a recipient, or words in the subject. */
+export interface SplitRule {
+  field: 'from' | 'to' | 'subject'
+  /** For addresses, `@example.com` is a domain, `a@example.com` an address, other text a part. */
+  value: string
+}
+/** A rule as a query carries it; `accountId` limits it to the split's account. */
+export interface SplitCondition extends SplitRule {
+  accountId?: string
+}
+/**
+ * A named view of the inbox, shown as its own tab. Mail matching any of its rules appears there
+ * instead of in the main Inbox tab. Splits only change what is shown; mail stays where it is.
+ */
+export interface Split {
+  id: string
+  name: string
+  /** Only this account's mail; every account when absent. */
+  accountId?: string
+  rules: SplitRule[]
 }
 export interface QueryPage {
   items: Conversation[]
@@ -253,6 +278,8 @@ export interface Settings {
   undoSendSeconds?: number
   /** Saved text to insert while writing. `{first_name}` becomes the first recipient's first name. */
   snippets?: Snippet[]
+  /** Split inbox tabs, in the order they are shown. */
+  splits?: Split[]
 }
 /**
  * A conversation to bring back later. A snooze leaves the inbox until `at`; a follow-up stays

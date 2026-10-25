@@ -110,6 +110,17 @@ export const appearanceSchema = z.object({
     .regex(/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/i)
     .optional(),
 })
+export const splitRuleSchema = z.object({
+  field: z.enum(['from', 'to', 'subject']),
+  value: z.string().max(320),
+})
+const splitConditionSchema = splitRuleSchema.extend({ accountId: id.optional() })
+export const splitSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(60),
+  accountId: id.optional(),
+  rules: z.array(splitRuleSchema).max(50),
+})
 export const querySchema = z.object({
   view: z.enum(['inbox', 'starred', 'archive', 'sent', 'drafts', 'junk', 'trash', 'all']),
   accountId: id.optional(),
@@ -122,6 +133,8 @@ export const querySchema = z.object({
   before: z.string().max(40).optional(),
   hasAttachment: z.boolean().optional(),
   unread: z.boolean().optional(),
+  matchAny: z.array(splitConditionSchema).max(50).optional(),
+  excludeAny: z.array(splitConditionSchema).max(1000).optional(),
 })
 export const actionSchema = z.enum([
   'archive',
@@ -220,6 +233,7 @@ export const settingsSchema = z.object({
     )
     .max(500)
     .optional(),
+  splits: z.array(splitSchema).max(20).optional(),
 })
 export const ipcSchemas = {
   encryptionStatus: z.tuple([]),

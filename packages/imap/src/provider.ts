@@ -23,6 +23,7 @@ import {
   type ProviderEvent,
   type ProviderPage,
   type SubmissionOutcome,
+  conditionsFor,
 } from '@inlark/core'
 import {
   attachmentsOf,
@@ -728,6 +729,10 @@ export class ImapProvider implements MailProvider {
     const boxes = await this.index.listMailboxes(this.accountId)
     const scope = await this.scope(query, boxes)
     if (!scope) return { items: [], total: 0 }
+    const matchAny = conditionsFor(query.matchAny, account.id)
+    // A split meant only for other accounts has nothing here.
+    if (matchAny && !matchAny.length) return { items: [], total: 0 }
+    const excludeAny = conditionsFor(query.excludeAny, account.id)
     const filter: ConversationFilter = {
       ...scope.filter,
       ...(query.view === 'starred' ? { flagged: true } : {}),
@@ -735,6 +740,8 @@ export class ImapProvider implements MailProvider {
       ...(query.hasAttachment ? { hasAttachment: true } : {}),
       ...(query.after ? { after: query.after } : {}),
       ...(query.before ? { before: query.before } : {}),
+      ...(matchAny ? { matchAny } : {}),
+      ...(excludeAny?.length ? { excludeAny } : {}),
     }
     let incomplete = scope.boxes.some((b) => !b.complete)
     if (query.text || query.from || query.to || query.subject) {
