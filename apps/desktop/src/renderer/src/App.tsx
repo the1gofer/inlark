@@ -35,6 +35,9 @@ import {
   ReplyAll,
   Forward,
   Undo2,
+  Clock,
+  AlarmClock,
+  UserSwitch,
   Folder,
   FolderPlus,
   Moon,
@@ -71,6 +74,7 @@ import {
   type MailQuery,
   type Message,
   type MutationTarget,
+  type Reminder,
   type QueryPage,
   type Split,
   type SubmissionSummary,
@@ -123,6 +127,9 @@ import { SubmissionList } from './SendingStatus'
 import { IndexingMeter } from './IndexingMeter'
 import { UpdateNotice } from './UpdateNotice'
 import { offersAction } from './view-actions'
+import { laterLabel } from './later'
+import { RemindDialog, RemindersDialog } from './Reminders'
+import { introRecipients } from './intro'
 import { version as packagedVersion } from '../../../package.json'
 const Composer = lazy(() => import('./Composer').then((m) => ({ default: m.Composer })))
 const SettingsPanel = lazy(() => import('./Settings').then((m) => ({ default: m.SettingsPanel })))
@@ -133,6 +140,8 @@ type Toast = {
   /** Undoes a change the client has not committed yet. */
   onUndo?: () => void
   tone?: 'error' | 'info'
+  /** How long it stays, when that is tied to something such as the undo send window. */
+  duration?: number
 }
 let toastSequence = 0
 // Matches the width where the sidebar turns into a slide-out menu (see mobile.css).
@@ -192,6 +201,11 @@ export function App() {
     [progress, setProgress] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ phase: 'idle' })
   const [folderDialog, setFolderDialog] = useState<FolderDialogState>()
+  const [remindFor, setRemindFor] = useState<{
+    kind: Reminder['kind']
+    targets: MutationTarget[]
+  }>()
+  const [remindersOpen, setRemindersOpen] = useState(false)
   const [moveTargets, setMoveTargets] = useState<MutationTarget[]>(),
     [confirmAction, setConfirmAction] = useState<MailAction>()
   const listRef = useRef<HTMLDivElement>(null),
@@ -361,6 +375,14 @@ export function App() {
     [conversations, drafts.data, route.account],
   )
   const draftItems = allDraftItems.filter((item) => !discarding.has(item.key))
+  const reminders = useQuery({
+    queryKey: ['reminders'],
+    queryFn: () => api.reminders(),
+    enabled: !!accounts.length,
+  })
+  const reminderList = (reminders.data || []).filter((r) =>
+    accounts.some((a) => a.id === r.accountId),
+  )
   const submissions = useQuery({
     queryKey: ['submissions'],
     queryFn: () => api.submissions(),
@@ -418,6 +440,68 @@ export function App() {
       : conversations
           .filter((c) => selected.has(c.key) || (!selected.size && c.key === focused))
           .map((c) => ({ accountId: c.accountId, threadId: c.id }))
+  const askRemind = (kind: Reminder['kind']) => {
+    const chosen = targets()
+    if (chosen.length) setRemindFor({ kind, targets: chosen })
+  }
+  const remind = async (at: Date) => {
+    if (!remindFor) return
+    const { kind, targets: chosen } = remindFor
+    setRemindFor(undefined)
+    const snoozing = kind === 'snooze'
+    if (route.thread && snoozing) {
+      const current = conversations.findIndex(
+        (c) => c.id === route.thread && c.accountId === route.threadAccount,
+      )
+      const preference = settings.afterArchive || 'next'
+      const neighbor =
+        current >= 0 && preference !== 'list'
+          ? preference === 'next'
+            ? (conversations[current + 1] ?? conversations[current - 1])
+            : (conversations[current - 1] ?? conversations[current + 1])
+          : undefined
+      if (neighbor) open(neighbor)
+      else back()
+    }
+    try {
+      let list: Reminder[] = []
+      for (const target of chosen)
+        list = await api.remind({ ...target, kind, at: at.toISOString() })
+      queryClient.setQueryData(['reminders'], list)
+      const made = list.filter(
+        (r) =>
+          r.kind === kind &&
+          chosen.some((t) => t.accountId === r.accountId && t.threadId === r.threadId),
+      )
+      setSelected(new Set())
+      setToast({
+        text:
+          (chosen.length > 1 ? chosen.length + ' conversations · ' : '') +
+          (snoozing ? 'Snoozed until ' : 'Reminder set for ') +
+          laterLabel(at),
+        onUndo: () => {
+          setToast({ text: 'Undoing…' })
+          void Promise.all(made.map((r) => api.cancelReminder(r.id)))
+            .then((results) => {
+              if (results.length) queryClient.setQueryData(['reminders'], results.at(-1))
+              notify(snoozing ? 'Unsnoozed.' : 'Reminder canceled.')
+              return refresh()
+            })
+            .catch(fail)
+        },
+      })
+      if (snoozing) await refresh()
+    } catch (e) {
+      fail(e)
+      await refresh()
+    }
+  }
+  const cancelReminder = (reminder: Reminder) =>
+    api.cancelReminder(reminder.id).then((list) => {
+      queryClient.setQueryData(['reminders'], list)
+      notify(reminder.kind === 'snooze' ? 'Back in your inbox.' : 'Reminder canceled.')
+      return refresh()
+    }, fail)
   const refresh = async () => {
     await Promise.all(
       ['mail', 'thread', 'mailboxes', 'drafts', 'submissions', 'split-counts'].map((key) =>
@@ -555,7 +639,7 @@ export function App() {
     )?.reason
   const compose = async (
     message?: Message,
-    kind: 'reply' | 'replyAll' | 'forward' = 'reply',
+    kind: 'reply' | 'replyAll' | 'forward' | 'intro' = 'reply',
     partial: Partial<Draft> = {},
   ) => {
     const id =
@@ -575,8 +659,16 @@ export function App() {
         notify('This account has no permitted sending identities.', 'error')
         return
       }
+      const intro = message && kind === 'intro' ? introRecipients(message, identities) : undefined
+      if (kind === 'intro' && !intro) {
+        notify('Nobody else is on this message to be introduced to.', 'info')
+        return
+      }
+      if (intro) partial = { to: intro.to, cc: [], bcc: intro.bcc, text: intro.thanks, ...partial }
       const recipients = message
-        ? replyRecipients(message, identities, kind === 'replyAll')
+        ? intro
+          ? { ...intro, cc: [] }
+          : replyRecipients(message, identities, kind === 'replyAll')
         : undefined
       const identity = recipients?.identity || identities[0]
       const signature = identitySignature(settings, identity)
@@ -740,6 +832,13 @@ export function App() {
     if (!range || !draftAnchor.current) draftAnchor.current = key
   }
   const openDraft = async (item: DraftItem) => {
+    if (item.kind === 'local' && item.draft.sendAt)
+      // Editing a scheduled message stops it from going out until it is sent again.
+      return api.cancelScheduledSend(item.draft.id).then((draft) => {
+        void queryClient.invalidateQueries({ queryKey: ['drafts'] })
+        notify('Schedule canceled. Send it again when it’s ready.', 'info')
+        setComposer(draft)
+      }, fail)
     if (item.kind === 'local') return setComposer(item.draft)
     try {
       const draft = await api.resumeDraft(item.message.accountId, item.message.id)
@@ -913,6 +1012,11 @@ export function App() {
             queryClient.setQueryData<SubmissionSummary[]>(['submissions'], event.submissions),
           )
       if (event.type === 'update') setUpdateStatus(event.status)
+      if (event.type === 'reminders') queryClient.setQueryData(['reminders'], event.reminders)
+      if (event.type === 'notice') {
+        notify(event.text, event.tone)
+        void queryClient.invalidateQueries({ queryKey: ['drafts'] })
+      }
     })
     if (boot.data) {
       void api
@@ -947,7 +1051,7 @@ export function App() {
   }, [route.thread, route.threadAccount, conversations])
   const [toastHeld, setToastHeld] = useState(false)
   const canUndo = !!toast?.undoId || !!toast?.onUndo
-  const toastDuration = canUndo ? 9000 : toast?.tone === 'error' ? 8000 : 5000
+  const toastDuration = toast?.duration ?? (canUndo ? 9000 : toast?.tone === 'error' ? 8000 : 5000)
   useEffect(() => {
     if (!toast || toastHeld) return
     const timer = setTimeout(() => setToast(undefined), toastDuration)
@@ -1131,6 +1235,9 @@ export function App() {
       unread: { run: () => void act('unread'), enabled: canAct },
       read: { run: () => void act('read'), enabled: canAct },
       star: { run: toggleStar, enabled: canAct },
+      snooze: { run: () => askRemind('snooze'), enabled: canAct && !allMatching },
+      followUp: { run: () => askRemind('followup'), enabled: canAct && !allMatching },
+      goReminders: { run: () => setRemindersOpen(true) },
       move: { run: () => openMove(targets()), enabled: canAct && !allMatching },
       undo: { run: () => void undo(), enabled: !blocked && canUndo },
       reply: { run: () => latest && void compose(latest), enabled: inThread },
@@ -1262,6 +1369,26 @@ export function App() {
           run: () => void act('restore'),
           ...limited('restore'),
         },
+        ...(!allMatching
+          ? [
+              {
+                id: 'snooze',
+                label: 'Snooze…',
+                icon: Clock,
+                key: keys('snooze'),
+                keywords: 'later remind defer',
+                run: () => askRemind('snooze'),
+              },
+              {
+                id: 'follow-up',
+                label: 'Remind me if no reply…',
+                icon: AlarmClock,
+                key: keys('followUp'),
+                keywords: 'follow up nudge reminder',
+                run: () => askRemind('followup'),
+              },
+            ]
+          : []),
         ...(latest && route.thread
           ? [
               {
@@ -1284,6 +1411,14 @@ export function App() {
                 icon: Forward,
                 key: keys('forward'),
                 run: () => void compose(latest, 'forward'),
+              },
+              {
+                id: 'instant-intro',
+                label: 'Instant intro',
+                description: 'Reply all and move the person who introduced you to Bcc',
+                icon: UserSwitch,
+                keywords: 'introduction bcc thanks',
+                run: () => void compose(latest, 'intro'),
               },
             ]
           : []),
@@ -1329,6 +1464,15 @@ export function App() {
       key: keys('compose'),
       keywords: 'new write email',
       run: () => void compose(),
+    },
+    {
+      id: 'reminders',
+      group: 'Mail',
+      label: 'Snoozed and reminders',
+      icon: Clock,
+      key: keys('goReminders'),
+      keywords: 'snooze follow up later',
+      run: () => setRemindersOpen(true),
     },
     {
       id: 'search-mail',
@@ -1653,6 +1797,11 @@ export function App() {
         draftCount={drafts.data?.filter((d) => !discarding.has('local:' + d.id)).length || 0}
         hasServerDrafts={mailboxCounts.drafts > 0}
         sendingIssues={pendingSends.length}
+        reminderCount={reminderList.length}
+        onOpenReminders={() => {
+          setDrawerOpen(false)
+          setRemindersOpen(true)
+        }}
         unreadCount={mailboxCounts.unread}
         accountUnread={mailboxCounts.byAccount}
         collapsed={collapsed && !phone}
@@ -1734,6 +1883,11 @@ export function App() {
               onUnsubscribe={() => void unsubscribe()}
               onUnlock={() => void unlock()}
               onOpenEncryption={() => openSettings('encryption')}
+              reminders={reminderList.filter(
+                (r) => r.threadId === route.thread && r.accountId === route.threadAccount,
+              )}
+              onRemind={askRemind}
+              onCancelReminder={(reminder) => void cancelReminder(reminder)}
             />
           ) : (
             <EmptyState
@@ -2617,8 +2771,25 @@ export function App() {
             onClose={() => setComposer(undefined)}
             onOpenAccounts={() => openSettings('accounts')}
             onOpenEncryption={() => openSettings('encryption')}
+            onOpenSnippets={() => openSettings('snippets')}
             notify={notify}
             onSaved={() => void queryClient.invalidateQueries({ queryKey: ['drafts'] })}
+            onScheduled={(draft, undoable) =>
+              setToast({
+                text: undoable ? 'Sending…' : 'Scheduled for ' + laterLabel(draft.sendAt!),
+                duration: undoable
+                  ? Math.max(Date.parse(draft.sendAt!) - Date.now(), 1000)
+                  : undefined,
+                onUndo: () => {
+                  setToast({ text: 'Undoing…' })
+                  api.cancelScheduledSend(draft.id).then((editable) => {
+                    void queryClient.invalidateQueries({ queryKey: ['drafts'] })
+                    setToast(undefined)
+                    setComposer(editable)
+                  }, fail)
+                },
+              })
+            }
           />
         )}
         {settingsOpen && (
@@ -2635,6 +2806,22 @@ export function App() {
           />
         )}
       </Suspense>
+      <RemindDialog
+        kind={remindFor?.kind}
+        onClose={() => setRemindFor(undefined)}
+        onPick={(at) => void remind(at)}
+      />
+      <RemindersDialog
+        open={remindersOpen}
+        onOpenChange={setRemindersOpen}
+        reminders={reminderList}
+        accounts={accounts}
+        onOpen={(reminder) => {
+          setRemindersOpen(false)
+          go({ thread: reminder.threadId, threadAccount: reminder.accountId }, false)
+        }}
+        onCancel={(reminder) => void cancelReminder(reminder)}
+      />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

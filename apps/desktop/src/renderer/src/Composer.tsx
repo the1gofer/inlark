@@ -20,6 +20,8 @@ import {
   ArrowUpRight,
   FileText,
   Lock,
+  Clock,
+  Zap,
 } from '@inlark/ui/icons'
 import { Modal, Button, IconButton, Select, Spinner } from '@inlark/ui'
 import {
@@ -48,6 +50,8 @@ import {
   useShortcuts,
 } from './shortcuts'
 import { SignatureNode } from './signature'
+import { LaterMenu } from './LaterMenu'
+import { SnippetPicker, fillSnippet, snippetHtml } from './SnippetPicker'
 import { linkTarget } from './link-target'
 import { SignatureParagraph, hasDraftContent, replaceSignature } from './composer-document'
 
@@ -114,8 +118,10 @@ export function Composer({
   onClose,
   onOpenAccounts,
   onOpenEncryption,
+  onOpenSnippets,
   notify,
   onSaved,
+  onScheduled,
 }: {
   initial: Draft
   suggestions: Address[]
@@ -126,8 +132,12 @@ export function Composer({
   onOpenAccounts: () => void
   /** Opens Settings → Encryption, to set up or fix this address's key. */
   onOpenEncryption: () => void
+  /** Opens Settings → Snippets, to write the first one. */
+  onOpenSnippets: () => void
   notify: (message: string, tone?: 'error' | 'info') => void
   onSaved: () => void
+  /** A send was scheduled: `undoable` for the short undo window, otherwise for later. */
+  onScheduled: (draft: Draft, undoable: boolean) => void
 }) {
   const [downgradeMode, setDowngradeMode] = useState<'none' | 'sign' | undefined>()
   // Once someone picks a protection mode, the recommendation never overrides it.
@@ -153,7 +163,8 @@ export function Composer({
     [linkValue, setLinkValue] = useState(''),
     [linkError, setLinkError] = useState(''),
     [editingLink, setEditingLink] = useState(false),
-    [discardOpen, setDiscardOpen] = useState(false)
+    [discardOpen, setDiscardOpen] = useState(false),
+    [snippetOpen, setSnippetOpen] = useState(false)
   const latest = useRef(draft),
     sync = useRef<Promise<unknown>>(Promise.resolve()),
     persisted = useRef(!!initial.serverId || initial.status !== 'local'),
@@ -423,7 +434,7 @@ export function Composer({
         earlierPlaintext: mode === 'encrypt' && persisted.current,
       })
   }
-  const send = async () => {
+  const send = async (later?: Date) => {
     if (locked || account.status !== 'connected') return
     const fields = ['to', 'cc', 'bcc'] as const
     if (!fields.some((field) => latest.current[field].length)) {
@@ -460,6 +471,29 @@ export function Composer({
         )
         return
       }
+    }
+    const delay = settings.undoSendSeconds ?? 10
+    if ((later || delay > 0) && latest.current.status !== 'uncertain') {
+      setSending(true)
+      setSendError(undefined)
+      try {
+        await sync.current
+        await localSaveDraft(latest.current)
+        const scheduled = await api.scheduleSend(
+          latest.current,
+          (later || new Date(Date.now() + delay * 1000)).toISOString(),
+        )
+        // The main process now owns this draft until it is sent or the send is undone.
+        await localDeleteDraft(scheduled.id).catch(() => {})
+        onSaved()
+        onScheduled(scheduled, !later)
+        onClose()
+      } catch (error) {
+        notify(friendlyError(error), 'error')
+      } finally {
+        setSending(false)
+      }
+      return
     }
     setSending(true)
     setSendError(undefined)
@@ -607,6 +641,11 @@ export function Composer({
     },
     discardDraft: {
       run: () => setDiscardOpen(true),
+      enabled: canEdit,
+      ignoreInputs: ignoreInputsForCommand,
+    },
+    insertSnippet: {
+      run: () => setSnippetOpen(true),
       enabled: canEdit,
       ignoreInputs: ignoreInputsForCommand,
     },
@@ -996,6 +1035,14 @@ export function Composer({
             >
               <Paperclip size={15} />
             </IconButton>
+            <IconButton
+              label="Insert snippet"
+              shortcut={keys('insertSnippet')}
+              onClick={() => setSnippetOpen(true)}
+              disabled={!canEdit}
+            >
+              <Zap size={15} />
+            </IconButton>
             {(own || protection !== 'none') && (
               <ProtectionMenu
                 mode={protection}
@@ -1037,6 +1084,28 @@ export function Composer({
                 </span>
               )}
             </Button>
+            <LaterMenu
+              title="Send later"
+              action="Schedule"
+              onPick={(at) => void send(at)}
+              trigger={
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Send later"
+                  title="Send later"
+                  className="compose-send-later data-popup-open:bg-hover"
+                  disabled={
+                    sending ||
+                    changingFrom ||
+                    account.status !== 'connected' ||
+                    draft.status === 'uncertain'
+                  }
+                >
+                  <Clock size={15} />
+                </Button>
+              }
+            />
             <span className="compose-account flex-1 text-right text-muted text-[11px] max-[700px]:text-[10px]">
               {identity?.email ?? (senderMissing ? '' : account.email)}
             </span>
@@ -1052,6 +1121,19 @@ export function Composer({
         </Dialog.Popup>
       </Dialog.Portal>
       <ContactKeyDialog email={reviewKey} onClose={() => setReviewKey(undefined)} />
+      <SnippetPicker
+        open={snippetOpen}
+        onOpenChange={setSnippetOpen}
+        snippets={settings.snippets || []}
+        onManage={onOpenSnippets}
+        onPick={(snippet) =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent(snippetHtml(fillSnippet(snippet.text, latest.current.to)))
+            .run()
+        }
+      />
       {unlockDialog}
       <Modal
         open={discardOpen}

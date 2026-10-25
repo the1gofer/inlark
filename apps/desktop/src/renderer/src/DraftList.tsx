@@ -3,6 +3,7 @@ import { ArrowUpRight, FileText, Trash2, X } from '@inlark/ui/icons'
 import { Checkbox, IconButton } from '@inlark/ui'
 import type { Account, Draft, Message } from '@inlark/core'
 import { shortDate } from './mail-date'
+import { laterLabel } from './later'
 import { useShortcutText } from './shortcuts'
 
 export type DraftItem =
@@ -89,7 +90,9 @@ export function DraftRows({
                   ? 'Server draft'
                   : item.draft.status === 'uncertain'
                     ? 'Delivery unconfirmed'
-                    : 'Saved draft'}
+                    : item.draft.sendAt
+                      ? 'Sends ' + laterLabel(item.draft.sendAt)
+                      : 'Saved draft'}
               </small>
               <time>
                 {shortDate(item.kind === 'server' ? item.message.receivedAt : item.draft.updatedAt)}

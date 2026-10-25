@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import { HugeiconsIcon, type HugeiconsIconProps, type IconSvgElement } from '@hugeicons/react'
 import {
   AlertCircle as AlertCircleGlyph,
+  AlarmClockIcon as AlarmClockGlyph,
   AppleIcon as AppleGlyph,
   Archive as ArchiveGlyph,
   ArrowDown as ArrowDownGlyph,
@@ -14,6 +15,7 @@ import {
   Calendar as CalendarGlyph,
   CalendarAdd02Icon as CalendarAddGlyph,
   Check as CheckGlyph,
+  Clock01Icon as ClockGlyph,
   ChevronDown as ChevronDownGlyph,
   ChevronLeft as ChevronLeftGlyph,
   ChevronRight as ChevronRightGlyph,
@@ -28,6 +30,8 @@ import {
   FileImportIcon as FileImportGlyph,
   FileSpreadsheetIcon as FileSpreadsheetIconGlyph,
   FileText as FileTextGlyph,
+  FlashIcon as ZapGlyph,
+  UserSwitchIcon as UserSwitchGlyph,
   Folder as FolderGlyph,
   FingerPrintIcon as FingerprintGlyph,
   FolderInputIcon as FolderInputIconGlyph,
@@ -99,6 +103,7 @@ const icon =
   (props) => <HugeiconsIcon icon={glyph} color="currentColor" {...props} />
 
 export const AlertCircle = icon(AlertCircleGlyph)
+export const AlarmClock = icon(AlarmClockGlyph)
 export const Apple = icon(AppleGlyph)
 export const Archive = icon(ArchiveGlyph)
 export const ArrowDown = icon(ArrowDownGlyph)
@@ -111,6 +116,7 @@ export const BadgeCheck = icon(BadgeCheckGlyph)
 export const Calendar = icon(CalendarGlyph)
 export const CalendarAdd = icon(CalendarAddGlyph)
 export const Check = icon(CheckGlyph)
+export const Clock = icon(ClockGlyph)
 export const ChevronDown = icon(ChevronDownGlyph)
 export const ChevronLeft = icon(ChevronLeftGlyph)
 export const ChevronRight = icon(ChevronRightGlyph)
@@ -125,6 +131,8 @@ export const FileImage = icon(FileImageGlyph)
 export const FileImport = icon(FileImportGlyph)
 export const FileSpreadsheet = icon(FileSpreadsheetIconGlyph)
 export const FileText = icon(FileTextGlyph)
+export const Zap = icon(ZapGlyph)
+export const UserSwitch = icon(UserSwitchGlyph)
 export const Folder = icon(FolderGlyph)
 export const Fingerprint = icon(FingerprintGlyph)
 export const FolderInput = icon(FolderInputIconGlyph)

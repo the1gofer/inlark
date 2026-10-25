@@ -508,6 +508,136 @@ describe('durable mail operations', () => {
     expect(log).not.toContain('Hello')
   })
 })
+describe('scheduled sending', () => {
+  const soon = (ms: number) => new Date(Date.now() + ms).toISOString()
+  it('sends a scheduled message when it is due and not before', async () => {
+    const submit = vi
+      .spyOn(JmapProvider.prototype, 'submit')
+      .mockResolvedValue({ accepted: ['recipient@example.com'], rejected: [] })
+    const scheduled = await service.scheduleSend(draft, soon(150))
+    expect(scheduled.sendAt).toBeTruthy()
+    expect(submit).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1), { timeout: 2000 })
+    await expect(service.cancelScheduledSend(draft.id)).rejects.toThrow('Too late')
+  })
+  it('undoes a send that has not started and returns the draft to edit', async () => {
+    const submit = vi.spyOn(JmapProvider.prototype, 'submit')
+    await service.scheduleSend(draft, soon(200))
+    const editable = await service.cancelScheduledSend(draft.id)
+    expect(editable.sendAt).toBeUndefined()
+    expect(editable.text).toBe('Hello')
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(submit).not.toHaveBeenCalled()
+    expect((await service.drafts())[0].sendAt).toBeUndefined()
+  })
+  it('keeps the schedule when an autosave arrives and across restarts', async () => {
+    const at = soon(60 * 60_000)
+    await service.scheduleSend(draft, at)
+    await service.saveDraft({ ...draft, text: 'Edited', updatedAt: new Date().toISOString() })
+    service.dispose()
+    service = new MailService(new JsonStore(directory), () => {})
+    await service.init()
+    expect((await service.drafts())[0].sendAt).toBe(at)
+  })
+  it('reports a scheduled send that fails and keeps the draft', async () => {
+    const events: unknown[] = []
+    service.dispose()
+    service = new MailService(new JsonStore(directory), (event) => events.push(event))
+    await service.init()
+    await service.connect({
+      config: { protocol: 'jmap', serverUrl: 'https://mail.example', username: 'test' },
+      password: 'disposable',
+      name: 'Test',
+      remember: false,
+      connectionId: 'connection',
+    })
+    vi.spyOn(JmapProvider.prototype, 'submit').mockRejectedValue(
+      new JmapError('submissionRejected', 'Recipient rejected'),
+    )
+    await service.scheduleSend(draft, soon(50))
+    await vi.waitFor(
+      () =>
+        expect(events).toContainEqual(expect.objectContaining({ type: 'notice', tone: 'error' })),
+      { timeout: 2000 },
+    )
+    const [kept] = await service.drafts()
+    expect(kept).toMatchObject({ status: 'error', text: 'Hello' })
+    expect(kept.sendAt).toBeUndefined()
+  })
+})
+describe('snooze and reminders', () => {
+  const soon = (ms: number) => new Date(Date.now() + ms).toISOString()
+  const lastUpdate = () => vi.mocked(JmapProvider.prototype.update).mock.calls.at(-1)![1]
+  it('snoozes out of the inbox and brings the conversation back unread when due', async () => {
+    const [reminder] = await service.remind({
+      accountId: account.id,
+      threadId: 'thread',
+      kind: 'snooze',
+      at: soon(150),
+    })
+    expect(reminder).toMatchObject({ kind: 'snooze', subject: 'Test' })
+    // Only the inbox changes; the message keeps its other folder.
+    expect(lastUpdate()).toEqual({ message: { mailboxes: { inbox: false, archive: true } } })
+    vi.mocked(JmapProvider.prototype.conversationMetadata).mockResolvedValue([
+      { ...mail, mailboxIds: { archive: true, custom: true } },
+    ])
+    await vi.waitFor(async () => expect(await service.reminders()).toHaveLength(0), {
+      timeout: 2000,
+    })
+    const calls = vi.mocked(JmapProvider.prototype.update).mock.calls.map((c) => c[1])
+    expect(calls).toContainEqual({ message: { keywords: { $seen: false } } })
+    expect(lastUpdate()).toEqual({ message: { mailboxes: { archive: false, inbox: true } } })
+  })
+  it('keeps a snooze across restarts', async () => {
+    const [reminder] = await service.remind({
+      accountId: account.id,
+      threadId: 'thread',
+      kind: 'snooze',
+      at: soon(60 * 60_000),
+    })
+    service.dispose()
+    service = new MailService(new JsonStore(directory), () => {})
+    await service.init()
+    expect(await service.reminders()).toEqual([reminder])
+  })
+  it('drops a follow-up when someone else replied, and keeps quiet', async () => {
+    const update = vi.mocked(JmapProvider.prototype.update)
+    await service.remind({
+      accountId: account.id,
+      threadId: 'thread',
+      kind: 'followup',
+      at: soon(100),
+    })
+    expect(update).not.toHaveBeenCalled()
+    vi.mocked(JmapProvider.prototype.conversationMetadata).mockResolvedValue([
+      {
+        ...mail,
+        mailboxIds: { archive: true },
+        from: [{ name: 'Them', email: 'them@example.com' }],
+        receivedAt: new Date(Date.now() + 1000).toISOString(),
+      },
+    ])
+    await vi.waitFor(async () => expect(await service.reminders()).toHaveLength(0), {
+      timeout: 2000,
+    })
+    expect(update).not.toHaveBeenCalled()
+  })
+  it('brings back a follow-up nobody answered', async () => {
+    vi.mocked(JmapProvider.prototype.conversationMetadata).mockResolvedValue([
+      { ...mail, mailboxIds: { archive: true }, from: [{ name: 'Me', email: account.email }] },
+    ])
+    await service.remind({
+      accountId: account.id,
+      threadId: 'thread',
+      kind: 'followup',
+      at: soon(100),
+    })
+    await vi.waitFor(async () => expect(await service.reminders()).toHaveLength(0), {
+      timeout: 2000,
+    })
+    expect(lastUpdate()).toEqual({ message: { mailboxes: { archive: false, inbox: true } } })
+  })
+})
 describe('untrusted message resource boundaries', () => {
   it('rejects local and reserved IP ranges, including mapped IPv6', async () => {
     for (const address of [

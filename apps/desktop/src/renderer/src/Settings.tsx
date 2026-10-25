@@ -19,6 +19,7 @@ import {
   SquarePen,
   Keyboard,
   LockKeyhole,
+  Zap,
   Layers,
 } from '@inlark/ui/icons'
 import { Button, Dropdown, EmptyState, MenuItem, Modal, Select, Switch } from '@inlark/ui'
@@ -34,6 +35,7 @@ import { api } from './api'
 import { queryClient, purgeAccountCache } from './cache'
 import { AccountAvatarPicker } from './AccountAvatarPicker'
 import { SignatureSettings } from './SignatureSettings'
+import { SnippetSettings } from './SnippetSettings'
 import { AccountSetup, type SetupMode } from './AccountSetup'
 import { FolderMappingsDialog } from './FolderMappings'
 import { AliasesDialog } from './Aliases'
@@ -154,6 +156,14 @@ const afterArchiveOptions: { value: NonNullable<Preferences['afterArchive']>; la
   { value: 'list', label: 'Return to the list' },
 ]
 
+const undoSendOptions = [
+  { value: '0', label: 'Off, send right away' },
+  { value: '5', label: '5 seconds' },
+  { value: '10', label: '10 seconds' },
+  { value: '20', label: '20 seconds' },
+  { value: '30', label: '30 seconds' },
+]
+
 export function SettingsPanel({
   open,
   onClose,
@@ -260,6 +270,7 @@ export function SettingsPanel({
               ['general', 'General', SlidersHorizontal],
               ['accounts', 'Accounts', Mail],
               ['signatures', 'Signatures', PenLine],
+              ['snippets', 'Snippets', Zap],
               ['splits', 'Split inbox', Layers],
               ['encryption', 'Encryption', LockKeyhole],
               ['shortcuts', 'Shortcuts', Keyboard],
@@ -375,6 +386,34 @@ export function SettingsPanel({
                       value={bootstrap.settings.afterArchive || 'next'}
                       options={afterArchiveOptions}
                       onValueChange={(afterArchive) => void update({ afterArchive })}
+                    />
+                  </div>
+                </div>
+                <div
+                  className={cn(
+                    'setting-section my-6.25 mx-0 [&_h4]:text-[11px] [&_h4]:font-medium [&_h4]:mt-0 [&_h4]:mb-3 [&_h4]:mx-0',
+                    '[&_h4]:text-secondary [&+.setting-section]:border-t [&+.setting-section]:border-solid',
+                    '[&+.setting-section]:border-t-border [&+.setting-section]:pt-5.5',
+                  )}
+                >
+                  <h4>Writing</h4>
+                  <div
+                    className={cn(
+                      'setting-row flex items-center justify-between my-3.5 mx-0 gap-6 [&_strong]:font-normal [&_p]:text-muted',
+                      '[&_p]:my-[3px] [&_p]:mx-0 [&_input]:shrink-0 [&>.button]:shrink-0 [&_p]:text-[12px] [&_p]:leading-[1.6]',
+                      '[&_strong]:text-[13px] max-[700px]:gap-3.5',
+                    )}
+                  >
+                    <div>
+                      <strong>Undo send</strong>
+                      <p>How long a message waits after you send it, so you can take it back.</p>
+                    </div>
+                    <Select
+                      aria-label="Undo send"
+                      className="setting-select w-auto min-w-60 shrink-0"
+                      value={String(bootstrap.settings.undoSendSeconds ?? 10)}
+                      options={undoSendOptions}
+                      onValueChange={(value) => void update({ undoSendSeconds: Number(value) })}
                     />
                   </div>
                 </div>
@@ -780,6 +819,16 @@ export function SettingsPanel({
                     </EmptyState>
                   </div>
                 )}
+              </>
+            )}
+            {tab === 'snippets' && (
+              <>
+                <h3 className="m-0 text-[20px] font-[550] tracking-[-0.5px]">Snippets</h3>
+                <p className="settings-lead text-muted mt-1.5 mb-6 mx-0 text-[12px] leading-[1.6]">
+                  Saved text you can insert while writing, with the ⚡ button or Ctrl/Cmd+; . Plain
+                  text only. {'{first_name}'} is replaced with the first recipient’s first name.
+                </p>
+                <SnippetSettings snippets={bootstrap.settings.snippets ?? []} onSave={update} />
               </>
             )}
             {tab === 'encryption' &&

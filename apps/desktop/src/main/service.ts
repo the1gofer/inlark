@@ -45,6 +45,7 @@ import {
   type ServerSettings,
   type SubmissionSummary,
   type Message,
+  type Reminder,
 } from '@inlark/core'
 import { JmapProvider } from '@inlark/jmap'
 import { publicFetch } from './public-fetch'
@@ -208,6 +209,9 @@ export class MailService {
   private disposed = false
   private indexingEmit?: ReturnType<typeof setTimeout>
   private timer?: ReturnType<typeof setInterval>
+  private sendTimer?: ReturnType<typeof setTimeout>
+  private reminderTimer?: ReturnType<typeof setTimeout>
+  private reminderList: Reminder[] = []
   private logs: { at: string; event: string; state?: string }[] = []
   private senderAvatars = new SenderAvatarResolver()
   readonly encryption: EncryptionService
@@ -283,6 +287,9 @@ export class MailService {
     await this.persistJournal()
     void Promise.allSettled(this.connections.map((c) => this.reconnect(c.id)))
     this.timer = setInterval(() => void this.refresh(), 60_000)
+    this.armSendTimer()
+    this.reminderList = await this.store.read<Reminder[]>('reminders', [])
+    this.armReminderTimer()
   }
   encryptionStatus = () => this.encryption.status()
   private async sendingIdentity(accountId: string, identityId: string) {
@@ -1170,6 +1177,8 @@ export class MailService {
         serverId: old.serverId,
         serverFingerprint: old.serverFingerprint,
       }
+    // Only scheduleSend and cancelScheduledSend change when a draft goes out.
+    draft = { ...draft, sendAt: old?.sendAt }
     if (
       draft.encryption !== 'encrypt' &&
       (old?.encryption === 'encrypt' || draft.encryptionRequired) &&
@@ -1488,6 +1497,236 @@ export class MailService {
       sentCopy: pending ? 'pending' : 'filed',
     }
   }
+  scheduleSend = async (input: Draft, sendAt: string): Promise<Draft> => {
+    if (Number.isNaN(Date.parse(sendAt))) throw new Error('Choose a valid time to send.')
+    const draft = sendDraftSchema.parse(await this.saveDraft(sendDraftSchema.parse(input)))
+    if (draft.status === 'sending' || draft.status === 'sent' || draft.status === 'uncertain')
+      throw new Error('This message has already been sent or is sending.')
+    const scheduled = { ...draft, sendAt: new Date(sendAt).toISOString() }
+    this.localDrafts.set(draft.id, scheduled)
+    await this.persistDrafts()
+    this.armSendTimer()
+    this.emit({ type: 'changed', accountId: draft.accountId })
+    return scheduled
+  }
+  cancelScheduledSend = async (id: string): Promise<Draft> => {
+    const draft = this.localDrafts.get(id)
+    if (!draft?.sendAt)
+      throw new Error(
+        draft?.status === 'sending' || draft?.status === 'sent' || !draft
+          ? 'Too late to undo. The message has already been sent.'
+          : 'This message isn’t scheduled.',
+      )
+    const editable = { ...draft, sendAt: undefined, updatedAt: new Date().toISOString() }
+    this.localDrafts.set(id, editable)
+    await this.persistDrafts()
+    this.armSendTimer()
+    this.emit({ type: 'changed', accountId: draft.accountId })
+    return editable
+  }
+  /** Wakes for the next scheduled send. Long waits are re-checked so clock changes are noticed. */
+  private armSendTimer() {
+    clearTimeout(this.sendTimer)
+    clearTimeout(this.reminderTimer)
+    if (this.disposed) return
+    const times = [...this.localDrafts.values()].flatMap((d) =>
+      d.sendAt ? [Date.parse(d.sendAt)] : [],
+    )
+    if (!times.length) return
+    const wait = Math.min(Math.max(Math.min(...times) - Date.now(), 0), 60_000)
+    this.sendTimer = setTimeout(() => void this.sendDue(), wait)
+  }
+  private async sendDue() {
+    const now = Date.now()
+    for (const draft of [...this.localDrafts.values()]) {
+      if (!draft.sendAt || Date.parse(draft.sendAt) > now) continue
+      // Right after startup accounts are still connecting; give them a few minutes first.
+      const status = this.accounts.find((a) => a.id === draft.accountId)?.status
+      if (status === 'connecting' && now - Date.parse(draft.sendAt) < 5 * 60_000) continue
+      const ready = { ...draft, sendAt: undefined }
+      this.localDrafts.set(draft.id, ready)
+      await this.persistDrafts()
+      const name = draft.subject ? '“' + draft.subject + '”' : 'your message'
+      try {
+        const result = await this.send(ready)
+        this.emit({
+          type: 'notice',
+          text:
+            result.status === 'uncertain'
+              ? 'Delivery of ' + name + ' is not confirmed. Check Drafts before trying again.'
+              : result.message,
+          tone: result.status === 'uncertain' ? 'error' : undefined,
+        })
+      } catch (error) {
+        this.log('scheduled-send-failed')
+        this.emit({
+          type: 'notice',
+          text: 'Couldn’t send ' + name + '. It’s in Drafts. ' + friendlyError(error),
+          tone: 'error',
+        })
+      }
+    }
+    this.armSendTimer()
+  }
+  reminders = async () => [...this.reminderList]
+  remind = async (input: {
+    accountId: string
+    threadId: string
+    kind: 'snooze' | 'followup'
+    at: string
+  }): Promise<Reminder[]> => {
+    if (!(Date.parse(input.at) > Date.now())) throw new Error('Choose a time in the future.')
+    const { provider, account } = this.provider(input.accountId)
+    const messages = await provider.conversationMetadata(account, [input.threadId])
+    if (!messages.length) throw new Error('This conversation is no longer available.')
+    const newest = messages.reduce((a, b) => (a.receivedAt > b.receivedAt ? a : b))
+    if (input.kind === 'snooze')
+      await this.moveThread(input.accountId, input.threadId, 'inbox', 'archive')
+    const reminder: Reminder = {
+      id: randomUUID(),
+      kind: input.kind,
+      accountId: input.accountId,
+      threadId: input.threadId,
+      subject: newest.subject,
+      at: new Date(input.at).toISOString(),
+      since: new Date().toISOString(),
+    }
+    // One reminder per conversation and kind; setting it again moves the time.
+    this.reminderList = [
+      ...this.reminderList.filter(
+        (r) =>
+          !(
+            r.accountId === input.accountId &&
+            r.threadId === input.threadId &&
+            r.kind === input.kind
+          ),
+      ),
+      reminder,
+    ]
+    await this.saveReminders()
+    return this.reminders()
+  }
+  cancelReminder = async (id: string): Promise<Reminder[]> => {
+    const reminder = this.reminderList.find((r) => r.id === id)
+    if (!reminder) return this.reminders()
+    if (reminder.kind === 'snooze')
+      await this.moveThread(reminder.accountId, reminder.threadId, 'archive', 'inbox')
+    this.reminderList = this.reminderList.filter((r) => r.id !== id)
+    await this.saveReminders()
+    return this.reminders()
+  }
+  private async saveReminders() {
+    await this.store.write('reminders', this.reminderList)
+    this.emit({ type: 'reminders', reminders: [...this.reminderList] })
+    this.armReminderTimer()
+  }
+  /**
+   * Moves only the conversation's messages that are in one folder, so a snooze never pulls
+   * Sent copies or other folders into the inbox. Returns how many messages moved.
+   */
+  private moveThread(
+    accountId: string,
+    threadId: string,
+    from: 'inbox' | 'archive',
+    to: 'inbox' | 'archive',
+    unread = false,
+  ) {
+    return this.exclusive(accountId, async () => {
+      const { provider, account } = this.provider(accountId)
+      const boxes = await provider.mailboxes(account)
+      const source = boxes.find((b) => b.role === from)
+      const destination = boxes.find((b) => b.role === to)
+      if (!source || !destination)
+        throw new Error('Your account needs an ' + (source ? to : from) + ' folder to snooze mail.')
+      const messages = (await provider.conversationMetadata(account, [threadId])).filter(
+        (m) => m.mailboxIds[source.id],
+      )
+      if (!messages.length) return 0
+      // Only the one folder changes, so labels and other folders a message is in stay put.
+      const changes = Object.fromEntries(
+        messages.map((m) => [m.id, { mailboxes: { [source.id]: false, [destination.id]: true } }]),
+      )
+      if (unread) {
+        // The newest message comes back unread, the way new mail arrives.
+        const newest = messages.reduce((a, b) => (a.receivedAt > b.receivedAt ? a : b))
+        const mark = planMutation([newest], boxes, 'unread', undefined, {
+          exclusiveMailboxes: provider.capabilities.exclusiveMailboxes,
+        })
+        await provider.update(account, mark.changes, [], provider.getStateToken(account))
+      }
+      const changed = await provider.update(account, changes, [], provider.getStateToken(account))
+      this.emit({ type: 'changed', accountId })
+      return changed.updated.length
+    })
+  }
+  private armReminderTimer() {
+    clearTimeout(this.reminderTimer)
+    if (this.disposed || !this.reminderList.length) return
+    const next = Math.min(...this.reminderList.map((r) => Date.parse(r.at)))
+    const wait = Math.min(Math.max(next - Date.now(), 0), 60_000)
+    this.reminderTimer = setTimeout(() => void this.remindersDue(), wait)
+  }
+  private async remindersDue() {
+    const now = Date.now()
+    let changed = false
+    for (const reminder of [...this.reminderList]) {
+      if (Date.parse(reminder.at) > now) continue
+      const account = this.accounts.find((a) => a.id === reminder.accountId)
+      if (!account) {
+        this.reminderList = this.reminderList.filter((r) => r.id !== reminder.id)
+        changed = true
+        continue
+      }
+      // Wait for the account to connect; the reminder stays until it can be handled.
+      if (account.status !== 'connected' || !this.providers.has(account.connectionId)) continue
+      try {
+        if (reminder.kind === 'followup') {
+          const own = new Set(
+            [account.email, ...(account.aliases || []).map((a) => a.email)].map((e) =>
+              e.toLowerCase(),
+            ),
+          )
+          const { provider } = this.provider(account.id)
+          const messages = await provider.conversationMetadata(account, [reminder.threadId])
+          const replied = messages.some(
+            (m) =>
+              m.receivedAt > reminder.since && m.from.some((a) => !own.has(a.email.toLowerCase())),
+          )
+          if (!replied) {
+            await this.moveThread(account.id, reminder.threadId, 'archive', 'inbox', true)
+            this.reminderNotification(account, reminder, 'No reply yet', reminder.subject)
+          }
+        } else {
+          await this.moveThread(account.id, reminder.threadId, 'archive', 'inbox', true)
+          this.reminderNotification(account, reminder, 'Back from snooze', reminder.subject)
+        }
+        this.reminderList = this.reminderList.filter((r) => r.id !== reminder.id)
+        changed = true
+      } catch (error) {
+        this.log('reminder-failed')
+      }
+    }
+    if (changed) await this.saveReminders()
+    else this.armReminderTimer()
+  }
+  private reminderNotification(
+    account: Account,
+    reminder: Reminder,
+    title: string,
+    subject: string,
+  ) {
+    this.emit({ type: 'notice', text: title + ': ' + (subject || '(no subject)') })
+    if (!this.settings.notifications || !Notification.isSupported()) return
+    try {
+      const notification = new Notification({ title, body: subject || account.name, silent: false })
+      notification.on('click', () =>
+        this.emit({ type: 'open', accountId: account.id, threadId: reminder.threadId }),
+      )
+      notification.show()
+    } catch {
+      this.log('reminder-notification-failed')
+    }
+  }
   send = async (input: Draft): Promise<SendResult> => {
     if (this.protectionTransition) throw new Error('The vault is locking.')
     let draft = sendDraftSchema.parse(input)
@@ -1497,7 +1736,8 @@ export class MailService {
       throw new Error('This draft is still saving. Try again in a moment.')
     const existing = this.journals.get(draft.id)
     if (existing && existing.state !== 'rejected') return this.reconcile(draft.id)
-    draft = sendDraftSchema.parse(await this.saveDraft(draft))
+    // Sending now replaces any schedule, so a failure can't be retried later behind the user's back.
+    draft = sendDraftSchema.parse({ ...(await this.saveDraft(draft)), sendAt: undefined })
     const { provider, account } = this.provider(draft.accountId)
     this.busyDrafts.add(draft.id)
     const journal: Journal = {
@@ -2211,6 +2451,7 @@ export class MailService {
     this.disposed = true
     void this.encryption.lock()
     if (this.timer) clearInterval(this.timer)
+    clearTimeout(this.sendTimer)
     if (this.indexingEmit) clearTimeout(this.indexingEmit)
     for (const provider of this.providers.values()) {
       provider.dispose()
