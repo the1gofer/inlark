@@ -62,7 +62,6 @@ import {
   mailtoDraft,
   replyRecipients,
   replyTarget,
-  splitForSender,
   splitQuery,
   visibleSplits,
   type Address,
@@ -127,6 +126,13 @@ import { SubmissionList } from './SendingStatus'
 import { IndexingMeter } from './IndexingMeter'
 import { UpdateNotice } from './UpdateNotice'
 import { offersAction } from './view-actions'
+import {
+  AddToSplitDialog,
+  NEW_SPLIT,
+  type AddToSplitRequest,
+  type SplitSource,
+} from './AddToSplitDialog'
+import { conversationDragType } from './split-drop'
 import { laterLabel } from './later'
 import { RemindDialog, RemindersDialog } from './Reminders'
 import { introRecipients } from './intro'
@@ -185,7 +191,9 @@ export function App() {
   const [unlock, unlockDialog] = useUnlock()
   const [settingsOpen, setSettingsOpen] = useState(false),
     [settingsTab, setSettingsTab] = useState('general'),
-    [splitDraft, setSplitDraft] = useState<Split>()
+    [splitDraft, setSplitDraft] = useState<Split>(),
+    [addToSplit, setAddToSplit] = useState<AddToSplitRequest>(),
+    [dropOver, setDropOver] = useState<string>()
   const [composer, setComposer] = useState<Draft>(),
     [paletteOpen, setPaletteOpen] = useState(false),
     [help, setHelp] = useState(false)
@@ -1095,11 +1103,54 @@ export function App() {
     const index = tabs.indexOf(activeSplit)
     showSplit(tabs[(index + by + tabs.length) % tabs.length])
   }
-  /** Starts a split for the sender of the open conversation, in Settings to name and refine. */
-  const splitSender = () => {
-    const sender = latest?.from[0]
-    if (sender) openSettings('splits', splitForSender(sender, queryAccount))
+  /** Splits you can add to from here: the ones for the account in view, or any account. */
+  const addableSplits = visibleSplits(settings.splits, queryAccount)
+  /** Asks what about a conversation a split should match, then adds that rule. */
+  const askAddToSplit = (conversation?: SplitSource, splitId?: string) => {
+    // From a menu, start with the split in view, so adding to it again is one step.
+    if (conversation) setAddToSplit({ conversation, splitId: splitId ?? activeSplit?.id })
   }
+  /** The open conversation, or the one selected or focused in the list. */
+  const splitSource = (): SplitSource | undefined => {
+    if (route.thread && thread.data?.length)
+      return { subject: thread.data[0]!.subject, from: [], messages: thread.data }
+    const key = selected.size === 1 ? [...selected][0] : !selected.size ? focused : undefined
+    return conversations.find((c) => c.key === key)
+  }
+  const saveSplit = async (split: Split, isNew: boolean) => {
+    const before = settings.splits || []
+    const after = isNew ? [...before, split] : before.map((s) => (s.id === split.id ? split : s))
+    setAddToSplit(undefined)
+    try {
+      const next = await api.settings({ ...settings, splits: after })
+      queryClient.setQueryData<Bootstrap>(['bootstrap'], (old) => old && { ...old, settings: next })
+      setToast({
+        text: (isNew ? 'Created ' : 'Added to ') + split.name,
+        onUndo: () =>
+          void savePreferences({ splits: before }).then(() => setToast({ text: 'Undone' })),
+      })
+    } catch (e) {
+      fail(e)
+    }
+  }
+  /** Lets a split tab accept a conversation row dragged onto it. */
+  const dropTarget = (splitId?: string) => ({
+    onDragOver: (event: React.DragEvent) => {
+      if (!event.dataTransfer.types.includes(conversationDragType)) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'link'
+      setDropOver(splitId ?? NEW_SPLIT)
+    },
+    onDragLeave: () => setDropOver(undefined),
+    onDrop: (event: React.DragEvent) => {
+      setDropOver(undefined)
+      const key = event.dataTransfer.getData(conversationDragType)
+      const conversation = conversations.find((c) => c.key === key)
+      if (!conversation) return
+      event.preventDefault()
+      askAddToSplit(conversation, splitId ?? NEW_SPLIT)
+    },
+  })
   const focusSearch = () => {
     setSearchOpen(true)
     requestAnimationFrame(() => searchInput.current?.select())
@@ -1545,15 +1596,15 @@ export function App() {
       keywords: 'go open split inbox tab',
       run: () => showSplit(split),
     })),
-    ...(route.thread && latest?.from[0]
+    ...(splitSource()
       ? [
           {
-            id: 'split-sender',
+            id: 'add-to-split',
             group: 'Mail',
-            label: 'Split inbox for ' + (latest.from[0].name || latest.from[0].email) + '…',
+            label: 'Add to split…',
             icon: Layers,
-            keywords: 'split inbox tab sender filter',
-            run: splitSender,
+            keywords: 'split inbox tab sender domain filter',
+            run: () => askAddToSplit(splitSource()),
           },
         ]
       : []),
@@ -1875,7 +1926,7 @@ export function App() {
               loading={thread.isPlaceholderData}
               onAction={(action) => void act(action)}
               onMove={() => openMove(targets())}
-              onSplitSender={splitSender}
+              onAddToSplit={() => askAddToSplit(splitSource())}
               onReply={(message, kind) => void compose(message, kind)}
               onEditDraft={(message) => void openDraft(threadDraft(message))}
               onDiscardDraft={(message) => {
@@ -2149,8 +2200,12 @@ export function App() {
                         'transition-[color,background,border-color] duration-120 hover:bg-hover hover:text-foreground',
                         active &&
                           'active bg-selected border-border-strong text-strong font-medium hover:bg-selected',
+                        split &&
+                          dropOver === split.id &&
+                          'drop-target border-primary-solid bg-primary-tint text-strong',
                       )}
                       onClick={() => showSplit(split)}
+                      {...(split ? dropTarget(split.id) : {})}
                     >
                       {split ? split.name : 'Inbox'}
                       {!!unread && (
@@ -2165,9 +2220,14 @@ export function App() {
                   )
                 })}
                 <IconButton
-                  className="shrink-0"
-                  label="Edit split inbox"
+                  className={cn(
+                    'shrink-0',
+                    dropOver === NEW_SPLIT &&
+                      'border border-solid border-primary-solid bg-primary-tint',
+                  )}
+                  label="Edit split inbox, or drop a conversation here for a new split"
                   onClick={() => openSettings('splits')}
+                  {...dropTarget()}
                 >
                   <Plus size={14} />
                 </IconButton>
@@ -2282,6 +2342,15 @@ export function App() {
                   >
                     <Archive size={16} />
                   </HintIconButton>
+                )}
+                {selected.size === 1 && !allMatching && (
+                  <IconButton
+                    label="Add to split…"
+                    disabled={busy}
+                    onClick={() => askAddToSplit(splitSource())}
+                  >
+                    <Layers size={16} />
+                  </IconButton>
                 )}
                 <IconButton
                   label="Mark selected as read"
@@ -2867,6 +2936,13 @@ export function App() {
           void act('move', moveTargets, id)
           setMoveTargets(undefined)
         }}
+      />
+      <AddToSplitDialog
+        request={addToSplit}
+        splits={addableSplits}
+        accounts={accounts}
+        onClose={() => setAddToSplit(undefined)}
+        onAdd={(split, isNew) => void saveSplit(split, isNew)}
       />
       <ConfirmActionDialog
         action={confirmAction}

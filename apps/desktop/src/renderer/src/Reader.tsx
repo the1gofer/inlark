@@ -628,8 +628,8 @@ interface ReaderProps {
   position?: string
   onAction: (action: MailAction) => void
   onMove: () => void
-  /** Starts a split inbox tab for the conversation's sender. */
-  onSplitSender?: () => void
+  /** Adds a rule matching this conversation to a split inbox tab. */
+  onAddToSplit?: () => void
   onReply: (message: Message, kind: 'reply' | 'replyAll' | 'forward' | 'intro') => void
   onEditDraft: (message: Message) => void
   onDiscardDraft: (message: Message) => void
@@ -723,7 +723,7 @@ export function Reader({
   position,
   onAction,
   onMove,
-  onSplitSender,
+  onAddToSplit,
   onReply,
   onEditDraft,
   onDiscardDraft,
@@ -920,10 +920,10 @@ export function Reader({
                 <ShortcutHint id="restore" className="menu-shortcut ml-auto" />
               </MenuItem>
             )}
-            {onSplitSender && (
-              <MenuItem onClick={onSplitSender}>
+            {onAddToSplit && (
+              <MenuItem onClick={onAddToSplit}>
                 <Layers size={14} />
-                Split inbox for this sender
+                Add to split…
               </MenuItem>
             )}
             {offersAction(view, 'destroy') && (
