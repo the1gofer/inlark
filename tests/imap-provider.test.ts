@@ -289,6 +289,26 @@ describe('IMAP indexing and reading', () => {
     expect(reopened.html).toBe(message.html)
     expect(reopened.preview).toBe('')
   })
+  it('opens mail with large attachments without downloading them', async () => {
+    server.deliver('INBOX', {
+      messageId: 'photos@x',
+      subject: 'Photos',
+      date: at(1),
+      text: 'Pictures attached',
+      attachments: [{ name: 'photo.jpg', type: 'image/jpeg', content: 'x'.repeat(300_000) }],
+    })
+    const p = await connected()
+    await sync(p)
+    const [thread] = (await p.query(account, { view: 'inbox' })).items
+    const port = server.commandPorts[0]
+    const source = vi.spyOn(port, 'source')
+    const download = vi.spyOn(port, 'download')
+    const [message] = await p.conversation(account, thread.id)
+    expect(message.text?.trim()).toBe('Pictures attached')
+    expect(message.attachments?.map((a) => a.name)).toEqual(['photo.jpg'])
+    expect(source).not.toHaveBeenCalled()
+    expect(download.mock.calls.map((call) => call[1])).toEqual(['1'])
+  })
   it('indexes recent Inbox mail first and reports incomplete results until history is indexed', async () => {
     for (let i = 0; i < 12; i++)
       server.deliver('INBOX', {
