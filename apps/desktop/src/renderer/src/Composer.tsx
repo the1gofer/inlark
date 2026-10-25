@@ -155,12 +155,15 @@ export function Composer({
         ? 'Delivery unconfirmed'
         : initial.status === 'error'
           ? 'Saved locally · sync failed'
-          : 'Saved on this device',
+          : initial.status === 'synced'
+            ? 'All changes saved'
+            : 'Saved on this device',
     ),
     [sending, setSending] = useState(false),
     [changingFrom, setChangingFrom] = useState(false),
     [showCc, setShowCc] = useState(initial.cc.length > 0 || initial.bcc.length > 0),
     [expanded, setExpanded] = useState(false),
+    [fileOver, setFileOver] = useState(false),
     [linkOpen, setLinkOpen] = useState(false),
     [linkValue, setLinkValue] = useState(''),
     [linkError, setLinkError] = useState(''),
@@ -364,7 +367,11 @@ export function Composer({
         .then(() => {
           if (alive.current)
             setState((current) =>
-              current === 'All changes saved' ? current : 'Saved on this device',
+              current === 'All changes saved'
+                ? current
+                : latest.current.identityId && account.status === 'connected'
+                  ? 'Saved on this device · syncing…'
+                  : 'Saved on this device',
             )
           onSaved()
         })
@@ -591,6 +598,47 @@ export function Composer({
       notify(friendlyError(error), 'error')
     }
   }
+  const attachDropped = async (files: File[]) => {
+    try {
+      if (files.some((file) => file.size > 100_000_000))
+        throw new Error('Files over 100 MB cannot be attached.')
+      const attachments = await api.stageAttachmentFiles(
+        await Promise.all(
+          files.map(async (file) => ({
+            name: file.name,
+            data: new Uint8Array(await file.arrayBuffer()),
+          })),
+        ),
+        latest.current.encryption === 'encrypt',
+      )
+      if (!alive.current || lockedRef.current) return
+      update({ attachments: [...latest.current.attachments, ...attachments] })
+    } catch (error) {
+      notify(friendlyError(error), 'error')
+    }
+  }
+  // Files dragged from the computer attach; the editor never sees them.
+  const hasFiles = (event: React.DragEvent) => event.dataTransfer.types.includes('Files')
+  const fileDrop = {
+    onDragOverCapture: (event: React.DragEvent) => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.dataTransfer.dropEffect = locked ? 'none' : 'copy'
+      if (!locked) setFileOver(true)
+    },
+    onDragLeave: (event: React.DragEvent) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFileOver(false)
+    },
+    onDropCapture: (event: React.DragEvent) => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      setFileOver(false)
+      const files = [...event.dataTransfer.files]
+      if (files.length && !locked) void attachDropped(files)
+    },
+  }
   const insertLink = () => {
     const href = linkTarget(linkValue)
     if (!href || !editor) {
@@ -717,11 +765,13 @@ export function Composer({
             'bg-surface border border-solid border-border-strong rounded-2xl shadow-popup z-71 flex flex-col overflow-hidden',
             'transition-[opacity,transform,filter] duration-160 ease-[ease] data-starting-style:opacity-0',
             'data-nested-dialog-open:brightness-[0.62]',
+            fileOver && 'outline-2 outline-dashed outline-primary -outline-offset-4',
             'data-starting-style:transform-[translateY(10px)_scale(0.99)] data-ending-style:opacity-0',
             'data-ending-style:transform-[translateY(10px)_scale(0.99)]',
             expanded &&
               'composer-expanded top-[50%] left-[50%] right-auto bottom-auto transform-[translate(-50%,_-50%)] h-[85vh] w-[min(900px,_90vw)] rounded-[11px] data-starting-style:transform-[translate(-50%,_-48%)_scale(0.99)] data-ending-style:transform-[translate(-50%,_-48%)_scale(0.99)]',
           )}
+          {...fileDrop}
           initialFocus={() =>
             initial.to.length && initial.subject && !locked
               ? document.querySelector<HTMLElement>('.compose-editor')
