@@ -884,11 +884,17 @@ export class ImapProvider implements MailProvider {
     const flagged = (row: IndexedMessage) => row.flags.some((f) => f.toLowerCase() === '\\draft')
     const isDraft = (row: IndexedMessage) => row.mailboxId === drafts || flagged(row)
     const emails = new Set(rows.filter((r) => r.emailId && isDraft(r)).map((r) => r.emailId))
-    return rows.map((row) =>
-      !flagged(row) && (isDraft(row) || (row.emailId && emails.has(row.emailId)))
-        ? { ...row, flags: [...row.flags, '\\Draft'] }
-        : row,
+    // A draft shows once: its Drafts copy, which a saved local draft points to, stands for the rest.
+    const filed = new Set(
+      rows.filter((r) => r.emailId && r.mailboxId === drafts).map((r) => r.emailId),
     )
+    return rows
+      .filter((row) => row.mailboxId === drafts || !(row.emailId && filed.has(row.emailId)))
+      .map((row) =>
+        !flagged(row) && (isDraft(row) || (row.emailId && emails.has(row.emailId)))
+          ? { ...row, flags: [...row.flags, '\\Draft'] }
+          : row,
+      )
   }
   async conversationMetadata(account: Account, threadIds: string[]): Promise<Message[]> {
     const rows = await this.index.threadMessages(this.accountId, threadIds)
