@@ -24,8 +24,8 @@ const saveable = (splits: Split[]): Split[] =>
   splits.map((s) => ({ ...s, name: s.name.trim() || 'Untitled split' }))
 
 /**
- * A From or To rule's value, suggesting people and domains from your inbox as you type. Recent
- * inbox mail answers at once; a search for what was typed fills in older senders.
+ * A From or To rule's value, suggesting people and domains from your mail as you type. Recent
+ * inbox mail answers at once; a search of the inbox and archive fills in older senders.
  */
 function AddressRuleInput({
   field,
@@ -60,7 +60,15 @@ function AddressRuleInput({
   })
   const search = useQuery({
     queryKey: ['split-addresses', accountId, field, searched],
-    queryFn: () => api.query({ view: 'inbox', accountId, [field]: searched }),
+    // Archived mail counts too: someone you always archive is a good split, but has no inbox mail.
+    queryFn: async () => {
+      const pages = await Promise.all(
+        (['inbox', 'archive'] as const).map((view) =>
+          api.query({ view, accountId, [field]: searched }),
+        ),
+      )
+      return { items: pages.flatMap((page) => page.items) }
+    },
     enabled: enabled && searched.length >= 2,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
