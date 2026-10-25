@@ -224,8 +224,10 @@ export function App() {
     lastRead = useRef(''),
     searchInput = useRef<HTMLInputElement>(null),
     // While an action runs, a refresh would read the server before it finishes and bring back
-    // conversations the list already hid. The action refreshes once it settles.
-    writing = useRef(false)
+    // conversations the list already hid. The last action to settle refreshes.
+    writing = useRef(0),
+    // Conversations with an action still running. Triage may act on the next one meanwhile.
+    acting = useRef(new Set<string>())
   const selectionAnchor = useRef<string | undefined>(undefined)
   const [draftSelected, setDraftSelected] = useState(new Set<string>()),
     draftAnchor = useRef<string | undefined>(undefined)
@@ -516,7 +518,7 @@ export function App() {
       return refresh()
     }, fail)
   const refresh = async () => {
-    if (writing.current) return
+    if (writing.current > 0) return
     await Promise.all(
       ['mail', 'thread', 'mailboxes', 'drafts', 'submissions', 'split-counts'].map((key) =>
         queryClient.invalidateQueries({ queryKey: [key] }),
@@ -529,7 +531,10 @@ export function App() {
     mailboxId?: string,
     confirmed = false,
   ) => {
-    if (busy) return
+    const keyOf = (t: MutationTarget) => t.accountId + '\n' + t.threadId
+    // While another action runs, only a single conversation not already being changed may act.
+    if (busy && (allMatching || (explicit || targets()).some((t) => acting.current.has(keyOf(t)))))
+      return
     // A server that can't do this safely explains why instead of failing halfway.
     const limit = targetLimit(
       accounts,
@@ -563,7 +568,9 @@ export function App() {
           : (conversations[current - 1] ?? conversations[current + 1])
         : undefined
     setBusy(true)
-    writing.current = true
+    writing.current++
+    const keys = allMatching ? [] : chosen.map(keyOf)
+    for (const key of keys) acting.current.add(key)
     suspendPersistence()
     const saved = queryClient.getQueriesData({ queryKey: ['mail'] })
     await queryClient.cancelQueries({ queryKey: ['mail'] })
@@ -630,11 +637,13 @@ export function App() {
       saved.forEach(([key, value]) => queryClient.setQueryData(key, value))
       fail(e)
     } finally {
-      writing.current = false
+      for (const key of keys) acting.current.delete(key)
       resumePersistence()
-      setBusy(false)
-      setProgress('')
-      await refresh()
+      if (--writing.current === 0) {
+        setBusy(false)
+        setProgress('')
+        await refresh()
+      }
     }
   }
   const openMove = (chosen: MutationTarget[]) => {
@@ -1942,7 +1951,8 @@ export function App() {
             </Button>
           </EmptyState>
         ) : route.thread && readerAccount ? (
-          thread.data ? (
+          // A failed load must not leave the list summary up with bodies that never arrive.
+          thread.data && !(thread.isError && thread.isPlaceholderData) ? (
             <Reader
               key={scopeKey(readerAccount.id, route.thread!)}
               messages={thread.data.filter(
@@ -1950,7 +1960,7 @@ export function App() {
               )}
               view={route.q ? 'all' : view}
               backLabel={title}
-              busy={busy}
+              busy={busy && acting.current.has(route.threadAccount + '\n' + route.thread)}
               account={readerAccount}
               settings={settings}
               onBack={back}
@@ -1992,6 +2002,7 @@ export function App() {
               title={thread.isError ? 'This conversation is unavailable' : 'Opening conversation'}
               description={thread.isError ? friendlyError(thread.error) : undefined}
             >
+              {thread.isError && <Button onClick={() => void thread.refetch()}>Try again</Button>}
               <Button onClick={back}>Back to {title.toLowerCase()}</Button>
             </EmptyState>
           )
