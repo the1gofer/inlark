@@ -3,7 +3,7 @@ import { useId, useRef, useState, type ReactNode } from 'react'
 import { Lock, LockOpen, X } from '@inlark/ui/icons'
 import { isValidRecipientEmail as valid, parseAddresses, type Address } from '@inlark/core'
 import { Avatar } from '@inlark/ui'
-import { matchAddresses } from './mentions'
+import { useContactMatches } from './contacts'
 
 const same = (a: Address, b: Address) => a.email.toLowerCase() === b.email.toLowerCase()
 const format = (a: Address) => (a.name ? a.name + ' <' + a.email + '>' : a.email)
@@ -63,7 +63,8 @@ export function RecipientField({
     return parsed.length > 0
   }
   const query = text.trim().toLowerCase()
-  const matches = query ? matchAddresses(suggestions, query, chips) : []
+  const found = useContactMatches(suggestions, query, chips)
+  const matches = query ? found : []
   const showing = open && matches.length > 0
   const highlighted = Math.min(active, matches.length - 1)
   return (
