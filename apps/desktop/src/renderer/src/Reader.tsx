@@ -329,6 +329,25 @@ export function EmailBody({
       })
       // Tracking pixels were removed synchronously above, so they do not count as images.
       const ownStyling = hasOwnStyling(template.content)
+      // Pictures painted as backgrounds, such as listing photos and maps in a table cell, load the
+      // same way. The frame only shows images inlark fetched, so a remote URL left here is blank.
+      const backgroundJobs = [
+        ...template.content.querySelectorAll<HTMLElement>('[background],[style*="url("]'),
+      ].map(async (element) => {
+        const declared = /url\(\s*['"]?(https?:[^'")\s]+)/i.exec(element.style.backgroundImage)
+        const original = element.getAttribute('background') || declared?.[1] || ''
+        element.removeAttribute('background')
+        if (declared) element.style.backgroundImage = ''
+        if (!/^https?:/.test(original)) return
+        if (!effectiveRemoteImages) {
+          if (active) setBlocked(true)
+          return
+        }
+        const source = await api
+          .remoteImage(original, !!message.security?.encrypted && permitDecryptedRemote)
+          .catch(() => null)
+        if (source) element.style.backgroundImage = 'url("' + source + '")'
+      })
       const html = () =>
         '<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="' +
         (ownStyling ? 'light' : theme) +
@@ -352,7 +371,7 @@ export function EmailBody({
         setAdaptive(!ownStyling)
         setSource(html())
       }
-      await Promise.allSettled(imageJobs)
+      await Promise.allSettled([...imageJobs, ...backgroundJobs])
       if (active) setSource(html())
     }
     setBlocked(false)
