@@ -118,6 +118,7 @@ import { SubmissionList } from './SendingStatus'
 import { IndexingMeter } from './IndexingMeter'
 import { UpdateNotice } from './UpdateNotice'
 import { offersAction } from './view-actions'
+import { laterLabel } from './later'
 import { version as packagedVersion } from '../../../package.json'
 const Composer = lazy(() => import('./Composer').then((m) => ({ default: m.Composer })))
 const SettingsPanel = lazy(() => import('./Settings').then((m) => ({ default: m.SettingsPanel })))
@@ -128,6 +129,8 @@ type Toast = {
   /** Undoes a change the client has not committed yet. */
   onUndo?: () => void
   tone?: 'error' | 'info'
+  /** How long it stays, when that is tied to something such as the undo send window. */
+  duration?: number
 }
 let toastSequence = 0
 // Matches the width where the sidebar turns into a slide-out menu (see mobile.css).
@@ -706,6 +709,13 @@ export function App() {
     if (!range || !draftAnchor.current) draftAnchor.current = key
   }
   const openDraft = async (item: DraftItem) => {
+    if (item.kind === 'local' && item.draft.sendAt)
+      // Editing a scheduled message stops it from going out until it is sent again.
+      return api.cancelScheduledSend(item.draft.id).then((draft) => {
+        void queryClient.invalidateQueries({ queryKey: ['drafts'] })
+        notify('Schedule canceled. Send it again when it’s ready.', 'info')
+        setComposer(draft)
+      }, fail)
     if (item.kind === 'local') return setComposer(item.draft)
     try {
       const draft = await api.resumeDraft(item.message.accountId, item.message.id)
@@ -874,6 +884,10 @@ export function App() {
             queryClient.setQueryData<SubmissionSummary[]>(['submissions'], event.submissions),
           )
       if (event.type === 'update') setUpdateStatus(event.status)
+      if (event.type === 'notice') {
+        notify(event.text, event.tone)
+        void queryClient.invalidateQueries({ queryKey: ['drafts'] })
+      }
     })
     if (boot.data) {
       void api
@@ -908,7 +922,7 @@ export function App() {
   }, [route.thread, route.threadAccount, conversations])
   const [toastHeld, setToastHeld] = useState(false)
   const canUndo = !!toast?.undoId || !!toast?.onUndo
-  const toastDuration = canUndo ? 9000 : toast?.tone === 'error' ? 8000 : 5000
+  const toastDuration = toast?.duration ?? (canUndo ? 9000 : toast?.tone === 'error' ? 8000 : 5000)
   useEffect(() => {
     if (!toast || toastHeld) return
     const timer = setTimeout(() => setToast(undefined), toastDuration)
@@ -2478,6 +2492,22 @@ export function App() {
             onOpenEncryption={() => openSettings('encryption')}
             notify={notify}
             onSaved={() => void queryClient.invalidateQueries({ queryKey: ['drafts'] })}
+            onScheduled={(draft, undoable) =>
+              setToast({
+                text: undoable ? 'Sending…' : 'Scheduled for ' + laterLabel(draft.sendAt!),
+                duration: undoable
+                  ? Math.max(Date.parse(draft.sendAt!) - Date.now(), 1000)
+                  : undefined,
+                onUndo: () => {
+                  setToast({ text: 'Undoing…' })
+                  api.cancelScheduledSend(draft.id).then((editable) => {
+                    void queryClient.invalidateQueries({ queryKey: ['drafts'] })
+                    setToast(undefined)
+                    setComposer(editable)
+                  }, fail)
+                },
+              })
+            }
           />
         )}
         {settingsOpen && (

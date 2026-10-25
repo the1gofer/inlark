@@ -183,6 +183,7 @@ export const draftSchema = z.object({
   errorKind: z
     .enum(['conflict', 'connection', 'outgoingAuthentication', 'certificate', 'rejected'])
     .optional(),
+  sendAt: z.string().datetime().optional(),
 })
 export const sendDraftSchema = draftSchema
   .refine(
@@ -208,6 +209,7 @@ export const settingsSchema = z.object({
   shortcuts: z
     .record(z.string().max(64), z.array(z.array(z.string().min(1).max(64)).min(1).max(4)).max(16))
     .optional(),
+  undoSendSeconds: z.number().int().min(0).max(60).optional(),
 })
 export const ipcSchemas = {
   encryptionStatus: z.tuple([]),
@@ -285,6 +287,8 @@ export const ipcSchemas = {
   deleteDraft: z.tuple([z.string().uuid()]),
   deleteServerDraft: z.tuple([id, id]),
   send: z.tuple([sendDraftSchema]),
+  scheduleSend: z.tuple([sendDraftSchema, z.string().datetime()]),
+  cancelScheduledSend: z.tuple([z.string().uuid()]),
   reconcile: z.tuple([z.string().uuid()]),
   submissions: z.tuple([]),
   retrySentCopy: z.tuple([z.string().uuid()]),

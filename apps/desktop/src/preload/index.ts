@@ -43,6 +43,8 @@ const methods = [
   'deleteDraft',
   'deleteServerDraft',
   'send',
+  'scheduleSend',
+  'cancelScheduledSend',
   'reconcile',
   'submissions',
   'retrySentCopy',

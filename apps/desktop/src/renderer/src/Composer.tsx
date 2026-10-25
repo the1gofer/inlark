@@ -20,6 +20,7 @@ import {
   ArrowUpRight,
   FileText,
   Lock,
+  Clock,
 } from '@inlark/ui/icons'
 import { Modal, Button, IconButton, Select, Spinner } from '@inlark/ui'
 import {
@@ -48,6 +49,7 @@ import {
   useShortcuts,
 } from './shortcuts'
 import { SignatureNode } from './signature'
+import { LaterMenu } from './LaterMenu'
 import { linkTarget } from './link-target'
 import { SignatureParagraph, hasDraftContent, replaceSignature } from './composer-document'
 
@@ -116,6 +118,7 @@ export function Composer({
   onOpenEncryption,
   notify,
   onSaved,
+  onScheduled,
 }: {
   initial: Draft
   suggestions: Address[]
@@ -128,6 +131,8 @@ export function Composer({
   onOpenEncryption: () => void
   notify: (message: string, tone?: 'error' | 'info') => void
   onSaved: () => void
+  /** A send was scheduled: `undoable` for the short undo window, otherwise for later. */
+  onScheduled: (draft: Draft, undoable: boolean) => void
 }) {
   const [downgradeMode, setDowngradeMode] = useState<'none' | 'sign' | undefined>()
   // Once someone picks a protection mode, the recommendation never overrides it.
@@ -423,7 +428,7 @@ export function Composer({
         earlierPlaintext: mode === 'encrypt' && persisted.current,
       })
   }
-  const send = async () => {
+  const send = async (later?: Date) => {
     if (locked || account.status !== 'connected') return
     const fields = ['to', 'cc', 'bcc'] as const
     if (!fields.some((field) => latest.current[field].length)) {
@@ -460,6 +465,29 @@ export function Composer({
         )
         return
       }
+    }
+    const delay = settings.undoSendSeconds ?? 10
+    if ((later || delay > 0) && latest.current.status !== 'uncertain') {
+      setSending(true)
+      setSendError(undefined)
+      try {
+        await sync.current
+        await localSaveDraft(latest.current)
+        const scheduled = await api.scheduleSend(
+          latest.current,
+          (later || new Date(Date.now() + delay * 1000)).toISOString(),
+        )
+        // The main process now owns this draft until it is sent or the send is undone.
+        await localDeleteDraft(scheduled.id).catch(() => {})
+        onSaved()
+        onScheduled(scheduled, !later)
+        onClose()
+      } catch (error) {
+        notify(friendlyError(error), 'error')
+      } finally {
+        setSending(false)
+      }
+      return
     }
     setSending(true)
     setSendError(undefined)
@@ -1037,6 +1065,28 @@ export function Composer({
                 </span>
               )}
             </Button>
+            <LaterMenu
+              title="Send later"
+              action="Schedule"
+              onPick={(at) => void send(at)}
+              trigger={
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Send later"
+                  title="Send later"
+                  className="compose-send-later data-popup-open:bg-hover"
+                  disabled={
+                    sending ||
+                    changingFrom ||
+                    account.status !== 'connected' ||
+                    draft.status === 'uncertain'
+                  }
+                >
+                  <Clock size={15} />
+                </Button>
+              }
+            />
             <span className="compose-account flex-1 text-right text-muted text-[11px] max-[700px]:text-[10px]">
               {identity?.email ?? (senderMissing ? '' : account.email)}
             </span>

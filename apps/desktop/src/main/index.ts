@@ -304,6 +304,8 @@ else {
         deleteDraft: service.deleteDraft,
         deleteServerDraft: service.deleteServerDraft,
         send: service.send,
+        scheduleSend: service.scheduleSend,
+        cancelScheduledSend: service.cancelScheduledSend,
         reconcile: service.reconcile,
         submissions: service.submissions,
         retrySentCopy: service.retrySentCopy,

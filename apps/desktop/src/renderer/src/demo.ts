@@ -228,6 +228,7 @@ const listeners = new Set<(event: AppEvent) => void>()
 const changes = new Map<string, Message | null>()
 const undoStack = new Map<string, [string, Message | null | undefined][]>()
 const drafts = new Map<string, Draft>()
+const demoSchedules = new Map<string, ReturnType<typeof setTimeout>>()
 let settings = { ...defaultSettings }
 const rights = {
   mayReadItems: true,
@@ -1288,6 +1289,38 @@ export const demoAPI: DesktopMailAPI = {
     const accountIndex = demoAccounts.findIndex((a) => a.id === accountId)
     changes.set(accountIndex + ':' + messageId.replace('message-', ''), null)
     changed()
+  },
+  scheduleSend: async (draft, sendAt) => {
+    const scheduled = { ...draft, sendAt, updatedAt: new Date().toISOString() }
+    drafts.set(draft.id, scheduled)
+    clearTimeout(demoSchedules.get(draft.id))
+    demoSchedules.set(
+      draft.id,
+      setTimeout(
+        () => {
+          demoSchedules.delete(draft.id)
+          const ready = { ...drafts.get(draft.id)!, sendAt: undefined }
+          void demoAPI.send(ready).then(
+            (result) => listeners.forEach((fn) => fn({ type: 'notice', text: result.message })),
+            (error: Error) =>
+              listeners.forEach((fn) => fn({ type: 'notice', text: error.message, tone: 'error' })),
+          )
+        },
+        Math.max(Date.parse(sendAt) - Date.now(), 0),
+      ),
+    )
+    changed()
+    return scheduled
+  },
+  cancelScheduledSend: async (id) => {
+    const draft = drafts.get(id)
+    if (!draft?.sendAt) throw new Error('Too late to undo. The message has already been sent.')
+    clearTimeout(demoSchedules.get(id))
+    demoSchedules.delete(id)
+    const editable = { ...draft, sendAt: undefined, updatedAt: new Date().toISOString() }
+    drafts.set(id, editable)
+    changed()
+    return editable
   },
   send: async (draft) => {
     await pause(500)

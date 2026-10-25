@@ -224,6 +224,8 @@ export interface Draft {
   error?: string
   /** What kind of problem `error` describes, so the composer can offer the right recovery. */
   errorKind?: DraftErrorKind
+  /** When a scheduled send goes out. Set only by `scheduleSend`; cleared once sending starts. */
+  sendAt?: string
 }
 export type DraftErrorKind =
   'conflict' | 'connection' | 'outgoingAuthentication' | 'certificate' | 'rejected'
@@ -247,6 +249,8 @@ export interface Settings {
    * pressed in turn, such as `['Mod+K']` or `['G', 'I']`; an empty list turns a shortcut off.
    */
   shortcuts?: Record<string, string[][]>
+  /** Seconds a sent message waits before it leaves, so it can be undone. 0 sends at once. */
+  undoSendSeconds?: number
 }
 export const defaultSettings: Settings = {
   theme: 'dark',
@@ -536,6 +540,8 @@ export type AppEvent =
   | { type: 'progress'; completed: number; total: number }
   | { type: 'submissions'; submissions: SubmissionSummary[] }
   | { type: 'update'; status: UpdateStatus }
+  /** Something finished in the background, such as a scheduled send, that the user should hear about. */
+  | { type: 'notice'; text: string; tone?: 'error' }
 export type UpdateStatus =
   | { phase: 'idle' }
   | { phase: 'downloading'; version: string; percent: number }
@@ -692,6 +698,10 @@ export interface DesktopMailAPI {
   /** Deletes a draft that exists only on the server, such as one started in another client. */
   deleteServerDraft(accountId: string, messageId: string): Promise<void>
   send(draft: Draft): Promise<SendResult>
+  /** Saves the draft and sends it at `sendAt`. Undo send uses a time a few seconds away. */
+  scheduleSend(draft: Draft, sendAt: string): Promise<Draft>
+  /** Stops a scheduled send that has not started and returns the draft to edit. */
+  cancelScheduledSend(draftId: string): Promise<Draft>
   reconcile(draftId: string): Promise<SendResult>
   submissions(): Promise<SubmissionSummary[]>
   /** Retries only the Sent copy of a message that was already sent. */

@@ -208,6 +208,7 @@ export class MailService {
   private disposed = false
   private indexingEmit?: ReturnType<typeof setTimeout>
   private timer?: ReturnType<typeof setInterval>
+  private sendTimer?: ReturnType<typeof setTimeout>
   private logs: { at: string; event: string; state?: string }[] = []
   private senderAvatars = new SenderAvatarResolver()
   readonly encryption: EncryptionService
@@ -283,6 +284,7 @@ export class MailService {
     await this.persistJournal()
     void Promise.allSettled(this.connections.map((c) => this.reconnect(c.id)))
     this.timer = setInterval(() => void this.refresh(), 60_000)
+    this.armSendTimer()
   }
   encryptionStatus = () => this.encryption.status()
   private async sendingIdentity(accountId: string, identityId: string) {
@@ -1170,6 +1172,8 @@ export class MailService {
         serverId: old.serverId,
         serverFingerprint: old.serverFingerprint,
       }
+    // Only scheduleSend and cancelScheduledSend change when a draft goes out.
+    draft = { ...draft, sendAt: old?.sendAt }
     if (
       draft.encryption !== 'encrypt' &&
       (old?.encryption === 'encrypt' || draft.encryptionRequired) &&
@@ -1488,6 +1492,76 @@ export class MailService {
       sentCopy: pending ? 'pending' : 'filed',
     }
   }
+  scheduleSend = async (input: Draft, sendAt: string): Promise<Draft> => {
+    if (Number.isNaN(Date.parse(sendAt))) throw new Error('Choose a valid time to send.')
+    const draft = sendDraftSchema.parse(await this.saveDraft(sendDraftSchema.parse(input)))
+    if (draft.status === 'sending' || draft.status === 'sent' || draft.status === 'uncertain')
+      throw new Error('This message has already been sent or is sending.')
+    const scheduled = { ...draft, sendAt: new Date(sendAt).toISOString() }
+    this.localDrafts.set(draft.id, scheduled)
+    await this.persistDrafts()
+    this.armSendTimer()
+    this.emit({ type: 'changed', accountId: draft.accountId })
+    return scheduled
+  }
+  cancelScheduledSend = async (id: string): Promise<Draft> => {
+    const draft = this.localDrafts.get(id)
+    if (!draft?.sendAt)
+      throw new Error(
+        draft?.status === 'sending' || draft?.status === 'sent' || !draft
+          ? 'Too late to undo. The message has already been sent.'
+          : 'This message isn’t scheduled.',
+      )
+    const editable = { ...draft, sendAt: undefined, updatedAt: new Date().toISOString() }
+    this.localDrafts.set(id, editable)
+    await this.persistDrafts()
+    this.armSendTimer()
+    this.emit({ type: 'changed', accountId: draft.accountId })
+    return editable
+  }
+  /** Wakes for the next scheduled send. Long waits are re-checked so clock changes are noticed. */
+  private armSendTimer() {
+    clearTimeout(this.sendTimer)
+    if (this.disposed) return
+    const times = [...this.localDrafts.values()].flatMap((d) =>
+      d.sendAt ? [Date.parse(d.sendAt)] : [],
+    )
+    if (!times.length) return
+    const wait = Math.min(Math.max(Math.min(...times) - Date.now(), 0), 60_000)
+    this.sendTimer = setTimeout(() => void this.sendDue(), wait)
+  }
+  private async sendDue() {
+    const now = Date.now()
+    for (const draft of [...this.localDrafts.values()]) {
+      if (!draft.sendAt || Date.parse(draft.sendAt) > now) continue
+      // Right after startup accounts are still connecting; give them a few minutes first.
+      const status = this.accounts.find((a) => a.id === draft.accountId)?.status
+      if (status === 'connecting' && now - Date.parse(draft.sendAt) < 5 * 60_000) continue
+      const ready = { ...draft, sendAt: undefined }
+      this.localDrafts.set(draft.id, ready)
+      await this.persistDrafts()
+      const name = draft.subject ? '“' + draft.subject + '”' : 'your message'
+      try {
+        const result = await this.send(ready)
+        this.emit({
+          type: 'notice',
+          text:
+            result.status === 'uncertain'
+              ? 'Delivery of ' + name + ' is not confirmed. Check Drafts before trying again.'
+              : result.message,
+          tone: result.status === 'uncertain' ? 'error' : undefined,
+        })
+      } catch (error) {
+        this.log('scheduled-send-failed')
+        this.emit({
+          type: 'notice',
+          text: 'Couldn’t send ' + name + '. It’s in Drafts. ' + friendlyError(error),
+          tone: 'error',
+        })
+      }
+    }
+    this.armSendTimer()
+  }
   send = async (input: Draft): Promise<SendResult> => {
     if (this.protectionTransition) throw new Error('The vault is locking.')
     let draft = sendDraftSchema.parse(input)
@@ -1497,7 +1571,8 @@ export class MailService {
       throw new Error('This draft is still saving. Try again in a moment.')
     const existing = this.journals.get(draft.id)
     if (existing && existing.state !== 'rejected') return this.reconcile(draft.id)
-    draft = sendDraftSchema.parse(await this.saveDraft(draft))
+    // Sending now replaces any schedule, so a failure can't be retried later behind the user's back.
+    draft = sendDraftSchema.parse({ ...(await this.saveDraft(draft)), sendAt: undefined })
     const { provider, account } = this.provider(draft.accountId)
     this.busyDrafts.add(draft.id)
     const journal: Journal = {
@@ -2211,6 +2286,7 @@ export class MailService {
     this.disposed = true
     void this.encryption.lock()
     if (this.timer) clearInterval(this.timer)
+    clearTimeout(this.sendTimer)
     if (this.indexingEmit) clearTimeout(this.indexingEmit)
     for (const provider of this.providers.values()) {
       provider.dispose()
