@@ -20,5 +20,10 @@ export const imapProviders: ProviderFactory = (input) => {
       : openWorkerIndex(join(input.directory, 'metadata.sqlite')),
     readAttachment: input.readAttachment,
     background: !input.temporary,
+    // Shows up in the server log, so a slow mail server or a busy sync can be told apart.
+    slow: ({ label, background, waitedMs, ranMs }) =>
+      console.warn(
+        `[imap] ${background ? 'background' : 'user'} ${label}: waited ${(waitedMs / 1000).toFixed(1)}s, ran ${(ranMs / 1000).toFixed(1)}s`,
+      ),
   })
 }

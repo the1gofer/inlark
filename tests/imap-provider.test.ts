@@ -498,6 +498,26 @@ describe('IMAP indexing and reading', () => {
     await sync(p)
     expect(await subjects(projects.id)).toEqual(['Plan'])
   })
+  it('does not queue another folder check while one is still running', async () => {
+    const p = await connected()
+    const requested = vi.spyOn(p as any, 'requestSync')
+    ;(p as any).syncing = true
+    await p.mailboxes(account)
+    expect(requested).not.toHaveBeenCalled()
+    ;(p as any).syncing = false
+    await p.mailboxes(account)
+    expect(requested).toHaveBeenCalledWith('all')
+  })
+  it('reports commands that hold the connection long enough to slow the app', async () => {
+    const reports: { label: string; background: boolean }[] = []
+    const p = await connected({ slow: (r) => reports.push(r) })
+    vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(5000)
+    await (p as any).run(async () => {}, true, 'sync Big folder')
+    vi.restoreAllMocks()
+    expect(reports).toEqual([
+      { label: 'sync Big folder', background: true, waitedMs: 0, ranMs: 5000 },
+    ])
+  })
   it('falls back to comparing flags when the server lacks CONDSTORE', async () => {
     server.capabilities.delete('CONDSTORE')
     const uid = server.deliver('INBOX', { messageId: 'a@x', subject: 'A', date: at(1) })
