@@ -362,6 +362,14 @@ export function App() {
       const merged = new Map<string, Draft>()
       for (const draft of values[0])
         if (draft.encryption === 'encrypt') await localDeleteDraft(draft.id)
+      // The service keeps every saved draft until it is sent or deleted. A saved copy only this
+      // browser still has was removed elsewhere; only unsaved work may live here alone.
+      const kept = new Set(values[0].map((d) => d.id))
+      for (const draft of values[1])
+        if (!kept.has(draft.id) && !['local', 'error'].includes(draft.status)) {
+          await localDeleteDraft(draft.id)
+          values[1] = values[1].filter((d) => d.id !== draft.id)
+        }
       for (const draft of values.flat()) {
         const old = merged.get(draft.id)
         if (
@@ -2107,12 +2115,9 @@ export function App() {
                   {title}
                   <span>
                     {view === 'drafts'
-                      ? (
-                          total +
-                          (drafts.data?.filter(
-                            (d) => (!route.account || d.accountId === route.account) && !d.serverId,
-                          ).length || 0) -
-                          (allDraftItems.length - draftItems.length)
+                      ? // The rows listed, plus server drafts on pages not loaded yet.
+                        (
+                          draftItems.length + Math.max(0, total - conversations.length)
                         ).toLocaleString()
                       : total.toLocaleString() + (incomplete.length ? '+' : '')}
                   </span>

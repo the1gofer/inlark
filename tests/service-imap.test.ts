@@ -496,6 +496,23 @@ describe('IMAP drafts', () => {
     expect(second.serverId).not.toBe(first.serverId)
     expect(server.box('Drafts').messages.map((m) => m.input.text?.trim())).toEqual(['Hello again'])
   })
+  it('drops a saved draft once another client sends or deletes its server copy', async () => {
+    const saved = await service.syncDraft(draft)
+    const unsaved = await service.saveDraft({
+      ...draft,
+      id: '0b6f4c1e-8a4f-4a52-9d1e-3c2f6a7b8c9d',
+      status: 'local',
+    })
+    const box = server.box('Drafts')
+    server.remove('Drafts', box.messages[0].uid)
+    const provider = (service as any).providers.get('imap-connection')
+    await provider.syncPass('all')
+    const account = (service as any).accounts.find((a: { id: string }) => a.id === accountId)
+    await (service as any).dropVanishedDrafts(provider, account)
+    const left = (await service.drafts()).map((d) => d.id)
+    expect(left).not.toContain(saved.id)
+    expect(left).toContain(unsaved.id)
+  })
   it('keeps both copies when another client changed the server draft', async () => {
     const first = await service.syncDraft(draft)
     // Another client saves its own edit: it appends a new draft and removes the old one.
@@ -549,7 +566,9 @@ describe('IMAP drafts', () => {
   })
   it('allows explicitly keeping a separate copy after a real remote conflict', async () => {
     const first = await service.syncDraft(draft)
-    server.setFlags('Drafts', server.box('Drafts').messages[0].uid, ['\\Seen'])
+    // Another client sent it: the copy left Drafts. (A copy still in Drafts counts as a draft
+    // even without the Draft flag, as Gmail's often are.)
+    server.remove('Drafts', server.box('Drafts').messages[0].uid)
     const conflict = await service.syncDraft({
       ...first,
       text: 'Mine',
@@ -566,7 +585,7 @@ describe('IMAP drafts', () => {
       updatedAt: '2026-09-23T10:02:00.000Z',
     })
     expect(separate.status).toBe('synced')
-    expect(server.box('Drafts').messages).toHaveLength(2)
+    expect(server.box('Drafts').messages).toHaveLength(1)
   })
   it('keeps the previous server draft when the replacement cannot be confirmed', async () => {
     const first = await service.syncDraft(draft)

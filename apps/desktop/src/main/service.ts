@@ -1389,6 +1389,42 @@ export class MailService {
     }
     if (draft.attachments.length) await this.persistStaging()
   }
+  /**
+   * A saved draft whose server copy is gone was sent or deleted in another client, such as
+   * Gmail. Drafts with unsaved edits stay, since they are not 'synced'.
+   */
+  private async dropVanishedDrafts(provider: MailProvider, account: Account) {
+    const synced = [...this.localDrafts.values()].filter(
+      (d) =>
+        d.accountId === account.id &&
+        d.status === 'synced' &&
+        d.serverId &&
+        d.encryption !== 'encrypt' &&
+        !this.busyDrafts.has(d.id),
+    )
+    if (!synced.length) return
+    const present = new Set(
+      (
+        await provider.messages(
+          account,
+          synced.map((d) => d.serverId!),
+        )
+      )
+        .filter((m) => m.keywords.$draft)
+        .map((m) => m.id),
+    )
+    let dropped = false
+    for (const draft of synced) {
+      const current = this.localDrafts.get(draft.id)
+      if (present.has(draft.serverId!) || this.busyDrafts.has(draft.id)) continue
+      if (current?.status !== 'synced' || current.updatedAt !== draft.updatedAt) continue
+      await this.deleteDraftLocal(draft.id)
+      dropped = true
+    }
+    if (!dropped) return
+    await this.persistDrafts()
+    this.emit({ type: 'changed', accountId: account.id })
+  }
   private async deleteDraftLocal(id: string) {
     const draft = this.localDrafts.get(id)
     if (draft?.encryption === 'encrypt') {
@@ -2376,6 +2412,7 @@ export class MailService {
         try {
           const { provider } = this.provider(account.id)
           const mailboxes = await provider.mailboxes(account)
+          await this.dropVanishedDrafts(provider, account)
           this.unreadCounts.set(
             account.id,
             mailboxes.filter((b) => b.role === 'inbox').reduce((sum, b) => sum + b.unreadEmails, 0),

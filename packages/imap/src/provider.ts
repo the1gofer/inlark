@@ -959,7 +959,7 @@ export class ImapProvider implements MailProvider {
    * All Mail, and flags only the Drafts copy with \\Draft, if it flags any copy at all. Draft
    * syncing reads the real flags, since a removed flag there means another client changed it.
    */
-  private async withDraftFlags(rows: IndexedMessage[]): Promise<IndexedMessage[]> {
+  private async withDraftFlags(rows: IndexedMessage[], dedupe = true): Promise<IndexedMessage[]> {
     const drafts = (await this.roleBox('drafts'))?.id
     const flagged = (row: IndexedMessage) => row.flags.some((f) => f.toLowerCase() === '\\draft')
     const isDraft = (row: IndexedMessage) => row.mailboxId === drafts || flagged(row)
@@ -969,7 +969,9 @@ export class ImapProvider implements MailProvider {
       rows.filter((r) => r.emailId && r.mailboxId === drafts).map((r) => r.emailId),
     )
     return rows
-      .filter((row) => row.mailboxId === drafts || !(row.emailId && filed.has(row.emailId)))
+      .filter(
+        (row) => !dedupe || row.mailboxId === drafts || !(row.emailId && filed.has(row.emailId)),
+      )
       .map((row) =>
         !flagged(row) && (isDraft(row) || (row.emailId && emails.has(row.emailId)))
           ? { ...row, flags: [...row.flags, '\\Draft'] }
@@ -981,7 +983,11 @@ export class ImapProvider implements MailProvider {
     return (await this.current(rows)).map((m) => toMessage(account.id, m))
   }
   async messages(account: Account, ids: string[], bodies = false): Promise<Message[]> {
-    const rows = await this.current(await this.index.messages(this.accountId, [...new Set(ids)]))
+    // Gmail may leave a draft unflagged; opening it to edit relies on it reading as a draft.
+    const rows = await this.withDraftFlags(
+      await this.current(await this.index.messages(this.accountId, [...new Set(ids)])),
+      false,
+    )
     if (!bodies) return rows.map((m) => toMessage(account.id, m))
     return this.withBodies(account, rows)
   }
