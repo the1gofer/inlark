@@ -54,6 +54,8 @@ import { LaterMenu } from './LaterMenu'
 import { SnippetPicker, fillSnippet, snippetHtml } from './SnippetPicker'
 import { linkTarget } from './link-target'
 import { SignatureParagraph, hasDraftContent, replaceSignature } from './composer-document'
+import { MentionNode } from './mentions'
+import { MentionMenu } from './MentionMenu'
 
 /** One From choice: an account and one of its sending addresses. */
 const senderKey = (accountId: string, identityId: string) => JSON.stringify([accountId, identityId])
@@ -164,11 +166,14 @@ export function Composer({
     [linkError, setLinkError] = useState(''),
     [editingLink, setEditingLink] = useState(false),
     [discardOpen, setDiscardOpen] = useState(false),
-    [snippetOpen, setSnippetOpen] = useState(false)
+    [snippetOpen, setSnippetOpen] = useState(false),
+    // Bumped when a mention adds someone to To, so the field shows the new chip.
+    [toVersion, setToVersion] = useState(0)
   const latest = useRef(draft),
     sync = useRef<Promise<unknown>>(Promise.resolve()),
     persisted = useRef(!!initial.serverId || initial.status !== 'local'),
-    alive = useRef(true)
+    alive = useRef(true),
+    mentionKeys = useRef<(event: KeyboardEvent) => boolean>(() => false)
   const account = accounts.find((a) => a.id === draft.accountId)!
   const senders = useQueries({
     queries: accounts.map((a) => ({
@@ -276,6 +281,7 @@ export function Composer({
       Placeholder.configure({ placeholder: 'Write your message…' }),
       SignatureNode,
       SignatureParagraph,
+      MentionNode,
     ],
     content:
       initial.html ||
@@ -289,10 +295,11 @@ export function Composer({
     editorProps: {
       attributes: {
         class:
-          "compose-editor [&[contenteditable='false']_.compose-signature-remove]:hidden min-h-45 outline-none text-[15px] leading-[1.8] text-foreground",
+          "compose-editor [&[contenteditable='false']_.compose-signature-remove]:hidden min-h-45 outline-none text-[15px] leading-[1.8] text-foreground [&_a.mention]:text-primary! [&_a.mention]:bg-primary-tint [&_a.mention]:rounded-sm [&_a.mention]:px-0.5",
         'aria-label': 'Message body',
         spellcheck: 'true',
       },
+      handleKeyDown: (_view, event) => mentionKeys.current(event),
     },
     onUpdate: ({ editor }) => update({ html: editor.getHTML(), text: editor.getText() }),
   })
@@ -655,14 +662,24 @@ export function Composer({
       enabled: canEdit && !!own,
     },
   })
+  // Mentioning someone who isn't on the message yet adds them to To, as Outlook does.
+  const mention = (address: Address) => {
+    const current = latest.current
+    const email = address.email.toLowerCase()
+    if ([...current.to, ...current.cc, ...current.bcc].some((a) => a.email.toLowerCase() === email))
+      return
+    update({ to: [...current.to, address] })
+    setToVersion((version) => version + 1)
+  }
   const addressField = (name: 'to' | 'cc' | 'bcc', label: string) => (
     <RecipientField
+      key={name === 'to' ? 'to-' + toVersion : name}
       id={'compose-' + name}
       label={label}
-      defaultValue={initial[name]}
+      defaultValue={name === 'to' && toVersion ? draft.to : initial[name]}
       suggestions={suggestions}
       disabled={locked}
-      autoFocus={name === 'to' && !initial.to.length}
+      autoFocus={name === 'to' && !initial.to.length && !toVersion}
       placeholder={name === 'to' ? 'Name or email address' : ''}
       onChange={(addresses) => update({ [name]: addresses })}
       security={chipSecurity}
@@ -904,6 +921,12 @@ export function Composer({
           </Modal>
           <div className="compose-body flex-1 overflow-auto py-5 px-6 min-h-0">
             <EditorContent editor={editor} />
+            <MentionMenu
+              editor={editor}
+              suggestions={suggestions}
+              keys={mentionKeys}
+              onPick={mention}
+            />
             {draft.attachments.length > 0 && (
               <div className="compose-attachments flex gap-1.75 flex-wrap mt-3.75">
                 {draft.attachments.map((a) => (
