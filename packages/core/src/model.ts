@@ -140,6 +140,8 @@ export interface Message {
   inReplyTo?: string[]
   references?: string[]
   unsubscribe?: { url: string; oneClick: boolean }
+  /** The top-level MIME type, when the provider knows it without downloading the message. */
+  contentType?: string
   security?: MailSecurity
   /** Revision of ciphertext, never a decrypted-body fingerprint. */
   protectedRevision?: string

@@ -221,6 +221,31 @@ describe('IMAP account setup', () => {
   })
 })
 
+describe('IMAP reading', () => {
+  it('opens plain mail without downloading the whole original', async () => {
+    server.deliver('INBOX', {
+      subject: 'Photos',
+      text: 'Pictures from the weekend',
+      attachments: [{ name: 'photo.jpg', type: 'image/jpeg', content: 'x'.repeat(50_000) }],
+    })
+    server.deliver('INBOX', {
+      subject: 'Signed',
+      text: '-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nHello',
+    })
+    await service.connect(input)
+    // Runs one background synchronization, as the provider's loop would.
+    await (service as any).providers.get('imap-connection').syncPass('all')
+    const raw = vi.spyOn(ImapProvider.prototype, 'rawMessage')
+    const page = await service.query({ view: 'inbox' })
+    const thread = (subject: string) => page.items.find((c) => c.subject === subject)!.id
+    const [photos] = await service.conversation(accountId, thread('Photos'))
+    expect(photos.text?.trim()).toBe('Pictures from the weekend')
+    expect(raw).not.toHaveBeenCalled()
+    await service.conversation(accountId, thread('Signed'))
+    expect(raw).toHaveBeenCalled()
+  })
+})
+
 describe('legacy connection migration', () => {
   it('upgrades version 1 records to JMAP connections atomically and keeps a backup', async () => {
     service.dispose()

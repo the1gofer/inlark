@@ -121,6 +121,18 @@ type Journal = {
   dismissed?: boolean
   at: string
 }
+/**
+ * A message whose structure shows no signature or encryption. Opening it needs no copy of the
+ * original, which for mail with large attachments can be far bigger than its readable parts.
+ */
+const plainMessage = (message: Message) =>
+  !!message.contentType &&
+  !message.security &&
+  !/^(multipart\/(signed|encrypted)|application\/(pgp|pkcs7-mime|x-pkcs7-mime))/.test(
+    message.contentType,
+  ) &&
+  !/-----BEGIN PGP (MESSAGE|SIGNED MESSAGE)-----/.test(message.text || '')
+
 /** Errors that prove nothing left for recipients during submission. */
 const definiteSubmissionCodes = [
   'submissionRejected',
@@ -863,12 +875,13 @@ export class MailService {
       const messages = await p.conversation(a, threadId)
       return Promise.all(
         messages.map(async (message) => {
-          const read = p.rawMessage
-            ? await this.encryption.read(
-                message,
-                await p.rawMessage(a, message.id, maxMessageBytes),
-              )
-            : message
+          const read =
+            p.rawMessage && !plainMessage(message)
+              ? await this.encryption.read(
+                  message,
+                  await p.rawMessage(a, message.id, maxMessageBytes),
+                )
+              : message
           const candidate = this.messageAuthCandidate(read)
           return {
             ...read,

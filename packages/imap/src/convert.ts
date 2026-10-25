@@ -232,6 +232,7 @@ export function toMessage(accountId: string, m: IndexedMessage): Message {
     inReplyTo: m.inReplyTo,
     references: m.references,
     ...(m.unsubscribe ? { unsubscribe: m.unsubscribe } : {}),
+    ...(m.bodyStructure ? { contentType: m.bodyStructure.type.toLowerCase() } : {}),
   }
 }
 
