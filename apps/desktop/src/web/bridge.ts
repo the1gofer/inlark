@@ -236,6 +236,13 @@ const overrides: Partial<DesktopMailAPI> = {
   },
   stageAttachments: (protectedDraft?: boolean) =>
     withFiles('stageAttachments', [protectedDraft], true, []) as never,
+  // Dropped files go up like picked ones, then stand in for the server's file picker.
+  stageAttachmentFiles: async (files, protectedDraft) =>
+    call(
+      'stageAttachments',
+      [protectedDraft],
+      await uploadAll(files.map((file) => new File([file.data as BlobPart], file.name))),
+    ) as never,
   setupEncryption: (input) =>
     input.action === 'import' ||
     input.action === 'historical' ||
@@ -254,4 +261,13 @@ window.mail = new Proxy(api, {
       ? overrides[name as keyof DesktopMailAPI]
       : Reflect.get(target, name),
 })
+// A file dropped anywhere the interface does not take it would replace the app with the file.
+for (const name of ['dragover', 'drop'])
+  window.addEventListener(name, (event) => {
+    const data = (event as DragEvent).dataTransfer
+    if (data?.types.includes('Files') && !event.defaultPrevented) {
+      event.preventDefault()
+      data.dropEffect = 'none'
+    }
+  })
 connect()

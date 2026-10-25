@@ -1527,6 +1527,9 @@ export const demoAPI: DesktopMailAPI = {
   stageAttachments: async () => {
     throw new Error('Native file attachments are available in the desktop app.')
   },
+  stageAttachmentFiles: async () => {
+    throw new Error('Native file attachments are available in the desktop app.')
+  },
   attachment: async () => {
     throw new Error('Attachment downloads require the desktop app.')
   },

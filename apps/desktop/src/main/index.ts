@@ -316,6 +316,7 @@ else {
         replaceUncertain: service.replaceUncertain,
         dismissSubmission: service.dismissSubmission,
         stageAttachments: service.stageAttachments,
+        stageAttachmentFiles: service.stageAttachmentFiles,
         attachment: service.attachment,
         inlineImage: service.inlineImage,
         remoteImage: service.remoteImage,

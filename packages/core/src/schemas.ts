@@ -331,6 +331,18 @@ export const ipcSchemas = {
   replaceUncertain: z.tuple([z.string().uuid()]),
   dismissSubmission: z.tuple([z.string().uuid()]),
   stageAttachments: z.tuple([z.boolean().optional()]),
+  stageAttachmentFiles: z.tuple([
+    z
+      .array(
+        z.object({
+          name: z.string().trim().min(1).max(255),
+          data: z.instanceof(Uint8Array),
+        }),
+      )
+      .min(1)
+      .max(100),
+    z.boolean().optional(),
+  ]),
   attachment: z.tuple([id, attachmentSchema, z.boolean()]),
   inlineImage: z.tuple([id, attachmentSchema]),
   remoteImage: z.tuple([z.string().url().max(8192), z.boolean().optional()]),
