@@ -15,8 +15,8 @@ export const conversationDragType = 'application/x-inlark-conversation'
  */
 export function setConversationDragImage(
   dataTransfer: DataTransfer,
-  sender: string,
-  subject: string,
+  title: string,
+  detail: string,
 ) {
   const wrapper = document.createElement('div')
   wrapper.style.cssText =
@@ -27,8 +27,8 @@ export function setConversationDragImage(
     'background:var(--surface);color:var(--text);border:1px solid var(--accent-solid);' +
     'box-shadow:0 6px 18px rgb(0 0 0 / 0.3);opacity:0.92;'
   for (const [text, weight] of [
-    [sender, '600'],
-    [subject, '400'],
+    [title, '600'],
+    [detail, '400'],
   ]) {
     const line = document.createElement('div')
     line.textContent = text
@@ -65,6 +65,39 @@ export function ruleOptions(
       subject: conversation.subject.replace(/^((re|fwd?|aw|sv)\s*:\s*)+/i, '').trim(),
     } satisfies Record<SplitRule['field'], string>,
   }
+}
+
+/**
+ * What rules several conversations suggest together: each one's sender, once, and their subject
+ * when they all share it. With one conversation this is its sender, subject and likeliest alias.
+ */
+export function ruleOptionsFor(
+  conversations: Pick<Conversation, 'subject' | 'from' | 'messages'>[],
+  own: Set<string>,
+) {
+  const each = conversations.map((c) => ruleOptions(c, own))
+  const senders = new Map<string, Address>()
+  for (const { sender } of each)
+    if (sender?.email.includes('@')) {
+      const email = sender.email.toLowerCase()
+      if (!senders.has(email)) senders.set(email, sender)
+    }
+  const subjects = new Set(each.map((o) => o.defaults.subject.toLowerCase()))
+  const first = each[0]
+  return {
+    senders: [...senders.values()],
+    domain: first?.domain || '',
+    defaults: {
+      from: senders.size === 1 ? [...senders.keys()][0]! : '',
+      to: each.length === 1 ? first!.defaults.to : '',
+      subject: subjects.size === 1 ? first!.defaults.subject : '',
+    } satisfies Record<SplitRule['field'], string>,
+  }
+}
+
+/** The split with each of these rules added, skipping ones it already has. */
+export function withRules(split: Split, rules: SplitRule[]): Split {
+  return rules.reduce(withRule, split)
 }
 
 /** The split with one more rule, unless it already has that rule. */

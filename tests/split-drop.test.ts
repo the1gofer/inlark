@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Conversation, Split } from '@inlark/core'
-import { ruleOptions, withRule } from '../apps/desktop/src/renderer/src/split-drop'
+import {
+  ruleOptions,
+  ruleOptionsFor,
+  withRule,
+  withRules,
+} from '../apps/desktop/src/renderer/src/split-drop'
 
 const conversation = {
   subject: 'Re: Fwd: Annual meeting',
@@ -39,5 +44,38 @@ describe('adding a conversation to a split', () => {
     expect(once.rules).toEqual([{ field: 'from', value: '@lakeviewhoa.org' }])
     expect(withRule(once, { field: 'from', value: '@LakeviewHOA.org' })).toBe(once)
     expect(withRule(once, { field: 'subject', value: 'meeting' }).rules).toHaveLength(2)
+  })
+
+  it('offers each sender once, and a subject only when all share it', () => {
+    const own = new Set(['jason@example.com', 'hoa@example.com'])
+    const from = (email: string, subject: string) =>
+      ({
+        subject,
+        from: [{ name: '', email }],
+        messages: [{ from: [{ name: '', email }], to: [], cc: [] }],
+      }) as unknown as Conversation
+    const several = [
+      from('A@x.com', 'Digest'),
+      from('b@y.com', 'Re: digest'),
+      from('a@x.com', 'Digest'),
+    ]
+    const options = ruleOptionsFor(several, own)
+    expect(options.senders.map((a) => a.email)).toEqual(['A@x.com', 'b@y.com'])
+    expect(options.defaults).toEqual({ from: '', to: '', subject: 'Digest' })
+    expect(ruleOptionsFor([several[0]!, from('c@z.com', 'Other')], own).defaults.subject).toBe('')
+    expect(ruleOptionsFor([conversation], own).defaults.to).toBe('hoa@example.com')
+  })
+
+  it('adds several rules at once, skipping ones the split has', () => {
+    const split: Split = { id: 's', name: 'X', rules: [{ field: 'from', value: 'a@x.com' }] }
+    expect(
+      withRules(split, [
+        { field: 'from', value: 'A@x.com' },
+        { field: 'from', value: 'b@y.com' },
+      ]).rules,
+    ).toEqual([
+      { field: 'from', value: 'a@x.com' },
+      { field: 'from', value: 'b@y.com' },
+    ])
   })
 })

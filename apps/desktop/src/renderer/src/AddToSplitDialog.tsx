@@ -4,11 +4,13 @@ import { Button, Modal, Select } from '@inlark/ui'
 import {
   newSplitId,
   type Account,
+  type Address,
   type Conversation,
   type Split,
   type SplitRule,
 } from '@inlark/core'
-import { ruleOptions, withRule } from './split-drop'
+import { X } from '@inlark/ui/icons'
+import { ruleOptionsFor, withRules } from './split-drop'
 
 const fields = [
   { value: 'from', label: 'From' },
@@ -26,11 +28,13 @@ function Choice({
   onSelect,
   title,
   detail,
+  children,
 }: {
   checked: boolean
   onSelect: () => void
   title: string
   detail?: string
+  children?: React.ReactNode
 }) {
   return (
     <label
@@ -58,6 +62,7 @@ function Choice({
             {detail}
           </span>
         )}
+        {children}
       </span>
       <span
         className={cn(
@@ -76,15 +81,16 @@ function Choice({
 export type SplitSource = Pick<Conversation, 'subject' | 'from' | 'messages'>
 
 export interface AddToSplitRequest {
-  conversation: SplitSource
+  /** One conversation, or several dragged or selected together. */
+  conversations: SplitSource[]
   /** The split it was dropped on, or `NEW_SPLIT`; none picks the first split. */
   splitId?: string
 }
 
 /**
- * Asks what about a conversation a split should match, then adds that rule to the chosen split.
- * Its sender and its subject are one click; the rule fields below show what will be saved and
- * take anything else, such as a domain or an alias it was sent to.
+ * Asks what about some conversations a split should match, then adds those rules to the chosen
+ * split. Their senders (one rule each) and a shared subject are one click; the rule fields below
+ * take anything else, such as a domain or an alias they were sent to.
  */
 export function AddToSplitDialog({
   request,
@@ -103,32 +109,45 @@ export function AddToSplitDialog({
   const [shown, setShown] = useState(request)
   if (request && request !== shown) setShown(request)
   const own = useMemo(() => new Set(accounts.map((a) => a.email.toLowerCase())), [accounts])
-  const options = useMemo(() => shown && ruleOptions(shown.conversation, own), [shown, own])
+  const options = useMemo(() => shown && ruleOptionsFor(shown.conversations, own), [shown, own])
   const [splitId, setSplitId] = useState(NEW),
     [name, setName] = useState(''),
+    [mode, setMode] = useState<'senders' | 'rule'>('senders'),
+    [senders, setSenders] = useState<Address[]>([]),
     [field, setField] = useState<SplitRule['field']>('from'),
     [value, setValue] = useState('')
+  const pickSenders = (list = senders) => {
+    setMode('senders')
+    setField('from')
+    setValue(list.length === 1 ? list[0]!.email.toLowerCase() : '')
+  }
   const pick = (next: SplitRule['field']) => {
+    setMode('rule')
     setField(next)
     setValue(options?.defaults[next] || '')
   }
   useEffect(() => {
     if (!request || !options) return
     setSplitId(request.splitId || splits[0]?.id || NEW)
-    setName(options.sender?.name || options.domain || '')
-    pick(options.sender ? 'from' : 'subject')
+    setName(options.senders[0]?.name || options.domain || '')
+    setSenders(options.senders)
+    if (options.senders.length) pickSenders(options.senders)
+    else pick('subject')
   }, [request])
   if (!options) return null
-  const sender = options.sender
-  const rule: SplitRule = { field, value }
-  const is = (preset: SplitRule['field']) =>
-    field === preset && value.trim() === options.defaults[preset]
+  const rules: SplitRule[] =
+    mode === 'senders'
+      ? senders.map((a) => ({ field: 'from', value: a.email.toLowerCase() }))
+      : value.trim()
+        ? [{ field, value }]
+        : []
+  const count = shown!.conversations.length
   const target = splits.find((s) => s.id === splitId)
-  const ready = !!rule.value.trim() && (target || name.trim())
+  const ready = !!rules.length && (target || name.trim())
   const submit = () => {
     if (!ready) return
-    if (target) onAdd(withRule(target, rule), false)
-    else onAdd(withRule({ id: newSplitId(), name: name.trim(), rules: [] }, rule), true)
+    if (target) onAdd(withRules(target, rules), false)
+    else onAdd(withRules({ id: newSplitId(), name: name.trim(), rules: [] }, rules), true)
   }
   return (
     <Modal
@@ -138,7 +157,11 @@ export function AddToSplitDialog({
       }}
       title="Add to split"
       description={
-        'Which mail like “' + (shown!.conversation.subject || '(No subject)') + '” should go here?'
+        count > 1
+          ? 'Which mail like these ' + count + ' conversations should go here?'
+          : 'Which mail like “' +
+            (shown!.conversations[0]!.subject || '(No subject)') +
+            '” should go here?'
       }
     >
       <form
@@ -171,19 +194,53 @@ export function AddToSplitDialog({
           )}
         </div>
         <div className="mt-4" role="radiogroup" aria-label="What to match">
-          {sender && (
+          {senders.length === 1 && (
             <Choice
-              checked={is('from')}
-              onSelect={() => pick('from')}
-              title={'This sender' + (sender.name ? ': ' + sender.name : '')}
-              detail={options.defaults.from}
+              checked={mode === 'senders'}
+              onSelect={() => pickSenders()}
+              title={'This sender' + (senders[0]!.name ? ': ' + senders[0]!.name : '')}
+              detail={senders[0]!.email.toLowerCase()}
             />
+          )}
+          {senders.length > 1 && (
+            <Choice
+              checked={mode === 'senders'}
+              onSelect={() => pickSenders()}
+              title={'These ' + senders.length + ' senders'}
+            >
+              <span className="flex flex-wrap gap-1.5 mt-2">
+                {senders.map((a) => (
+                  <span
+                    key={a.email}
+                    className="sender-chip inline-flex items-center gap-1 max-w-full h-6 pl-2 pr-0.5 rounded-md bg-hover text-[12px] text-secondary"
+                    title={a.email}
+                  >
+                    <span className="truncate">{a.email.toLowerCase()}</span>
+                    <button
+                      type="button"
+                      className="grid place-items-center w-5 h-5 rounded text-muted hover:text-foreground hover:bg-selected"
+                      aria-label={'Leave out ' + a.email}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        const rest = senders.filter((s) => s !== a)
+                        setSenders(rest)
+                        pickSenders(rest)
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </span>
+            </Choice>
           )}
           {options.defaults.subject && (
             <Choice
-              checked={is('subject')}
+              checked={
+                mode === 'rule' && field === 'subject' && value.trim() === options.defaults.subject
+              }
               onSelect={() => pick('subject')}
-              title="This subject"
+              title={count > 1 ? 'Their subject' : 'This subject'}
               detail={options.defaults.subject}
             />
           )}
@@ -203,7 +260,10 @@ export function AddToSplitDialog({
               placeholder={field === 'subject' ? 'Words in the subject' : 'Address or @domain'}
               spellCheck={false}
               autoCapitalize="off"
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => {
+                setMode('rule')
+                setValue(e.target.value)
+              }}
             />
           </div>
         </div>

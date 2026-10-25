@@ -94,6 +94,7 @@ import { MoveDialog } from './MoveDialog'
 import { CommandPalette, type Command } from './CommandPalette'
 import { Sidebar, views } from './Sidebar'
 import { ConversationList, type ConversationListHandle } from './ConversationList'
+import { senderLabel } from './ConversationRow'
 import { DraftRows, DraftSelectionBar, deletable, type DraftItem } from './DraftList'
 import { longDate } from './mail-date'
 import {
@@ -132,7 +133,7 @@ import {
   type AddToSplitRequest,
   type SplitSource,
 } from './AddToSplitDialog'
-import { conversationDragType } from './split-drop'
+import { conversationDragType, setConversationDragImage } from './split-drop'
 import { laterLabel } from './later'
 import { RemindDialog, RemindersDialog } from './Reminders'
 import { introRecipients } from './intro'
@@ -952,7 +953,18 @@ export function App() {
   useEffect(() => {
     // Outline every split tab while a conversation is dragged, so the targets stand out.
     const start = (event: DragEvent) => {
-      if (event.dataTransfer?.types.includes(conversationDragType)) setDragging(true)
+      const data = event.dataTransfer
+      if (!data?.types.includes(conversationDragType)) return
+      setDragging(true)
+      // A small card instead of the row, saying how many conversations go along.
+      const chosen = dragged.current(data.getData(conversationDragType))
+      if (chosen.length > 1)
+        setConversationDragImage(
+          data,
+          chosen.length + ' conversations',
+          [...new Set(chosen.map(senderLabel))].join(', '),
+        )
+      else if (chosen[0]) setConversationDragImage(data, senderLabel(chosen[0]), chosen[0].subject)
     }
     const end = () => {
       setDragging(false)
@@ -1124,18 +1136,28 @@ export function App() {
   }
   /** Splits you can add to from here: the ones for the account in view, or any account. */
   const addableSplits = visibleSplits(settings.splits, queryAccount)
-  /** Asks what about a conversation a split should match, then adds that rule. */
-  const askAddToSplit = (conversation?: SplitSource, splitId?: string) => {
+  /** Asks what about some conversations a split should match, then adds those rules. */
+  const askAddToSplit = (sources: SplitSource[], splitId?: string) => {
     // From a menu, start with the split in view, so adding to it again is one step.
-    if (conversation) setAddToSplit({ conversation, splitId: splitId ?? activeSplit?.id })
+    if (sources.length)
+      setAddToSplit({ conversations: sources, splitId: splitId ?? activeSplit?.id })
   }
-  /** The open conversation, or the one selected or focused in the list. */
-  const splitSource = (): SplitSource | undefined => {
+  /** The open conversation, or the ones selected in the list, or the focused one. */
+  const splitSources = (): SplitSource[] => {
     if (route.thread && thread.data?.length)
-      return { subject: thread.data[0]!.subject, from: [], messages: thread.data }
-    const key = selected.size === 1 ? [...selected][0] : !selected.size ? focused : undefined
-    return conversations.find((c) => c.key === key)
+      return [{ subject: thread.data[0]!.subject, from: [], messages: thread.data }]
+    if (allMatching) return []
+    return selected.size
+      ? conversations.filter((c) => selected.has(c.key))
+      : conversations.filter((c) => c.key === focused)
   }
+  /** A dragged row brings the whole selection along when it is part of it. */
+  const draggedWith = (key: string) =>
+    selected.has(key)
+      ? conversations.filter((c) => selected.has(c.key))
+      : conversations.filter((c) => c.key === key)
+  const dragged = useRef(draggedWith)
+  dragged.current = draggedWith
   const saveSplit = async (split: Split, isNew: boolean) => {
     const before = settings.splits || []
     const after = isNew ? [...before, split] : before.map((s) => (s.id === split.id ? split : s))
@@ -1163,11 +1185,10 @@ export function App() {
     onDragLeave: () => setDropOver(undefined),
     onDrop: (event: React.DragEvent) => {
       setDropOver(undefined)
-      const key = event.dataTransfer.getData(conversationDragType)
-      const conversation = conversations.find((c) => c.key === key)
-      if (!conversation) return
+      const chosen = draggedWith(event.dataTransfer.getData(conversationDragType))
+      if (!chosen.length) return
       event.preventDefault()
-      askAddToSplit(conversation, splitId ?? NEW_SPLIT)
+      askAddToSplit(chosen, splitId ?? NEW_SPLIT)
     },
   })
   const focusSearch = () => {
@@ -1615,7 +1636,7 @@ export function App() {
       keywords: 'go open split inbox tab',
       run: () => showSplit(split),
     })),
-    ...(splitSource()
+    ...(splitSources().length
       ? [
           {
             id: 'add-to-split',
@@ -1623,7 +1644,7 @@ export function App() {
             label: 'Add to split…',
             icon: Layers,
             keywords: 'split inbox tab sender domain filter',
-            run: () => askAddToSplit(splitSource()),
+            run: () => askAddToSplit(splitSources()),
           },
         ]
       : []),
@@ -1945,7 +1966,7 @@ export function App() {
               loading={thread.isPlaceholderData}
               onAction={(action) => void act(action)}
               onMove={() => openMove(targets())}
-              onAddToSplit={() => askAddToSplit(splitSource())}
+              onAddToSplit={() => askAddToSplit(splitSources())}
               onReply={(message, kind) => void compose(message, kind)}
               onEditDraft={(message) => void openDraft(threadDraft(message))}
               onDiscardDraft={(message) => {
@@ -2364,11 +2385,11 @@ export function App() {
                     <Archive size={16} />
                   </HintIconButton>
                 )}
-                {selected.size === 1 && !allMatching && (
+                {!!selected.size && !allMatching && (
                   <IconButton
                     label="Add to split…"
                     disabled={busy}
-                    onClick={() => askAddToSplit(splitSource())}
+                    onClick={() => askAddToSplit(splitSources())}
                   >
                     <Layers size={16} />
                   </IconButton>
