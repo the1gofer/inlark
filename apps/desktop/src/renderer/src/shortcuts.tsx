@@ -54,6 +54,7 @@ export const shortcutDefinitions = [
   { id: 'goSpam', section: 'Go to', label: 'Spam', defaults: [['G', 'J']] },
   { id: 'goTrash', section: 'Go to', label: 'Trash', defaults: [['G', 'B']] },
   { id: 'goAll', section: 'Go to', label: 'All mail', defaults: [['G', 'M']] },
+  { id: 'goReminders', section: 'Go to', label: 'Snoozed and reminders', defaults: [['G', 'L']] },
   { id: 'archive', section: 'Organize', label: 'Archive', defaults: [['E']] },
   {
     id: 'trash',
@@ -72,6 +73,13 @@ export const shortcutDefinitions = [
     section: 'Organize',
     label: 'Unsubscribe from mailing list',
     defaults: [['Mod+U']],
+  },
+  { id: 'snooze', section: 'Organize', label: 'Snooze', defaults: [['H']] },
+  {
+    id: 'followUp',
+    section: 'Organize',
+    label: 'Remind me if no reply',
+    defaults: [['Shift+H']],
   },
   { id: 'star', section: 'Organize', label: 'Star or unstar', defaults: [['S']] },
   { id: 'unread', section: 'Organize', label: 'Mark as unread', defaults: [['U'], ['Shift+U']] },

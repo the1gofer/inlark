@@ -19,6 +19,7 @@ import {
   FileText,
   Key,
   WifiOff,
+  Clock,
 } from '@inlark/ui/icons'
 import { Button, Dropdown, IconButton, MenuItem, Spinner } from '@inlark/ui'
 import { Wordmark } from '@inlark/ui/components/wordmark'
@@ -52,6 +53,8 @@ export function Sidebar({
   draftCount,
   hasServerDrafts,
   sendingIssues,
+  reminderCount,
+  onOpenReminders,
   unreadCount,
   accountUnread,
   collapsed,
@@ -71,6 +74,9 @@ export function Sidebar({
   hasServerDrafts: boolean
   /** Sends that still need a decision, shown in Drafts. */
   sendingIssues: number
+  /** Snoozed conversations and pending follow-up reminders. */
+  reminderCount: number
+  onOpenReminders: () => void
   unreadCount: number
   accountUnread: Record<string, number>
   collapsed: boolean
@@ -458,6 +464,31 @@ export function Sidebar({
           >
             <Key size={15} strokeWidth={1.65} />
             {!collapsed && <span>Back up your key</span>}
+          </button>
+        )}
+        {reminderCount > 0 && (
+          <button
+            className={cn(
+              'nav-item flex gap-2.5 items-center w-full h-8.5 py-0 px-2.5 border-0 bg-none bg-transparent rounded-md',
+              'text-secondary text-[13px] text-left my-[2px] mx-0 transition-[color,background] duration-120 ease-[ease]',
+              'focus-visible:outline-offset-[-2px] [&>span]:flex-1 [&>span]:overflow-hidden [&>span]:text-ellipsis',
+              '[&>span]:whitespace-nowrap [&>span]:relative [&>span]:top-[1px] [&>small]:relative [&>small]:top-[1px]',
+              'hover:bg-hover hover:text-foreground [&_small]:text-[11px] [&_small]:text-muted [&_small]:tabular-nums',
+              '[.sidebar-collapsed_&]:justify-center [.sidebar-collapsed_&]:p-1.75 sidebar-reminders [&_small]:ml-auto',
+            )}
+            title={
+              'Snoozed and reminders' + (keys('goReminders') ? ' · ' + keys('goReminders') : '')
+            }
+            aria-label={reminderCount + ' snoozed or reminders'}
+            onClick={onOpenReminders}
+          >
+            <Clock size={15} strokeWidth={1.65} />
+            {!collapsed && (
+              <>
+                <span>Snoozed</span>
+                <small>{reminderCount}</small>
+              </>
+            )}
           </button>
         )}
         {sendingIssues > 0 && (

@@ -32,6 +32,9 @@ import {
   Lock,
   Copy,
   ExternalLink,
+  Clock,
+  AlarmClock,
+  X,
 } from '@inlark/ui/icons'
 import { Tooltip } from '@base-ui/react/tooltip'
 import { Button, IconButton, Dropdown, MenuItem, Spinner } from '@inlark/ui'
@@ -44,11 +47,13 @@ import {
   type Settings,
   type MailAction,
   type View,
+  type Reminder,
 } from '@inlark/core'
 import { api } from './api'
 import { SenderAvatar } from './SenderAvatar'
 import { useResolvedTheme, token } from './theme'
 import { formatBytes, longDate, messageDate } from './mail-date'
+import { laterLabel } from './later'
 import { AccountMark } from './AccountMark'
 import { HintIconButton } from './HintIconButton'
 import { actionLimit } from './account-limits'
@@ -633,6 +638,10 @@ interface ReaderProps {
   loading?: boolean
   onUnlock?: () => void
   onOpenEncryption?: () => void
+  /** Snooze or follow-up reminders set on this conversation. */
+  reminders?: Reminder[]
+  onRemind?: (kind: Reminder['kind']) => void
+  onCancelReminder?: (reminder: Reminder) => void
 }
 export type UnsubscribeState = 'available' | 'pending' | 'done'
 const unsubscribeLabels = {
@@ -720,6 +729,9 @@ export function Reader({
   loading = false,
   onUnlock,
   onOpenEncryption,
+  reminders = [],
+  onRemind,
+  onCancelReminder,
 }: ReaderProps) {
   const keys = useShortcutText()
   // Unsent drafts sit below the conversation they would continue, never among what was said.
@@ -851,6 +863,20 @@ export function Reader({
               </Button>
             }
           >
+            {onRemind && (
+              <>
+                <MenuItem onClick={() => onRemind('snooze')}>
+                  <Clock size={14} />
+                  Snooze…
+                  <ShortcutHint id="snooze" className="menu-shortcut ml-auto" />
+                </MenuItem>
+                <MenuItem onClick={() => onRemind('followup')}>
+                  <AlarmClock size={14} />
+                  Remind me if no reply…
+                  <ShortcutHint id="followUp" className="menu-shortcut ml-auto" />
+                </MenuItem>
+              </>
+            )}
             <MenuItem onClick={onMove} disabled={!!moveLimit}>
               <FolderInput size={14} />
               Move to folder
@@ -955,6 +981,27 @@ export function Reader({
             </span>
           </div>
           <h1>{newest.subject || '(No subject)'}</h1>
+          {reminders.map((reminder) => (
+            <div
+              key={reminder.id}
+              className="reader-reminder flex items-center gap-2 -mt-5 mb-6 text-[12px] text-secondary [&_svg]:text-muted"
+            >
+              {reminder.kind === 'snooze' ? <Clock size={14} /> : <AlarmClock size={14} />}
+              <span className="flex-1 min-w-0">
+                {(reminder.kind === 'snooze'
+                  ? 'Snoozed until '
+                  : 'Comes back if nobody replies by ') + laterLabel(reminder.at)}
+              </span>
+              {onCancelReminder && (
+                <IconButton
+                  label={reminder.kind === 'snooze' ? 'Unsnooze' : 'Cancel reminder'}
+                  onClick={() => onCancelReminder(reminder)}
+                >
+                  <X size={13} />
+                </IconButton>
+              )}
+            </div>
+          ))}
           <div className="conversation-messages">
             {[...history, ...drafts].map((message) => {
               if (foldedIds.has(message.id))

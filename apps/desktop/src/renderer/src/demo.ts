@@ -27,6 +27,7 @@ import {
   type MutationInput,
   type ServerSettings,
   type SubmissionSummary,
+  type Reminder,
 } from '@inlark/core'
 import { longDate } from './mail-date'
 import { version as packagedVersion } from '../../../package.json'
@@ -229,6 +230,7 @@ const changes = new Map<string, Message | null>()
 const undoStack = new Map<string, [string, Message | null | undefined][]>()
 const drafts = new Map<string, Draft>()
 const demoSchedules = new Map<string, ReturnType<typeof setTimeout>>()
+let demoReminders: Reminder[] = []
 let settings = { ...defaultSettings }
 const rights = {
   mayReadItems: true,
@@ -1321,6 +1323,59 @@ export const demoAPI: DesktopMailAPI = {
     drafts.set(id, editable)
     changed()
     return editable
+  },
+  reminders: async () => [...demoReminders],
+  remind: async ({ accountId, threadId, kind, at }) => {
+    const [conversation] = (await demoAPI.query({ view: 'all' })).items.filter(
+      (c) => c.accountId === accountId && c.id === threadId,
+    )
+    if (kind === 'snooze')
+      await demoAPI.mutate({ targets: [{ accountId, threadId }], action: 'archive' })
+    const reminder: Reminder = {
+      id: crypto.randomUUID(),
+      kind,
+      accountId,
+      threadId,
+      subject: conversation?.subject || '',
+      at,
+      since: new Date().toISOString(),
+    }
+    demoReminders = [
+      ...demoReminders.filter(
+        (r) => !(r.accountId === accountId && r.threadId === threadId && r.kind === kind),
+      ),
+      reminder,
+    ]
+    setTimeout(
+      () => {
+        if (!demoReminders.some((r) => r.id === reminder.id)) return
+        demoReminders = demoReminders.filter((r) => r.id !== reminder.id)
+        void demoAPI
+          .mutate({ targets: [{ accountId, threadId }], action: 'restore' })
+          .then(() => demoAPI.mutate({ targets: [{ accountId, threadId }], action: 'unread' }))
+        listeners.forEach((fn) => {
+          fn({ type: 'reminders', reminders: [...demoReminders] })
+          fn({
+            type: 'notice',
+            text: (kind === 'snooze' ? 'Back from snooze: ' : 'No reply yet: ') + reminder.subject,
+          })
+        })
+      },
+      Math.min(Math.max(Date.parse(at) - Date.now(), 0), 2 ** 31 - 1),
+    )
+    listeners.forEach((fn) => fn({ type: 'reminders', reminders: [...demoReminders] }))
+    return [...demoReminders]
+  },
+  cancelReminder: async (id) => {
+    const reminder = demoReminders.find((r) => r.id === id)
+    demoReminders = demoReminders.filter((r) => r.id !== id)
+    if (reminder?.kind === 'snooze')
+      await demoAPI.mutate({
+        targets: [{ accountId: reminder.accountId, threadId: reminder.threadId }],
+        action: 'restore',
+      })
+    listeners.forEach((fn) => fn({ type: 'reminders', reminders: [...demoReminders] }))
+    return [...demoReminders]
   },
   send: async (draft) => {
     await pause(500)

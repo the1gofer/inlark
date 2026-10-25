@@ -254,6 +254,20 @@ export interface Settings {
   /** Saved text to insert while writing. `{first_name}` becomes the first recipient's first name. */
   snippets?: Snippet[]
 }
+/**
+ * A conversation to bring back later. A snooze leaves the inbox until `at`; a follow-up stays
+ * where it is and comes back only if nobody else has written since it was set.
+ */
+export interface Reminder {
+  id: string
+  kind: 'snooze' | 'followup'
+  accountId: string
+  threadId: string
+  subject: string
+  at: string
+  /** When it was set; a follow-up counts replies after this. */
+  since: string
+}
 export interface Snippet {
   id: string
   name: string
@@ -549,6 +563,7 @@ export type AppEvent =
   | { type: 'update'; status: UpdateStatus }
   /** Something finished in the background, such as a scheduled send, that the user should hear about. */
   | { type: 'notice'; text: string; tone?: 'error' }
+  | { type: 'reminders'; reminders: Reminder[] }
 export type UpdateStatus =
   | { phase: 'idle' }
   | { phase: 'downloading'; version: string; percent: number }
@@ -709,6 +724,16 @@ export interface DesktopMailAPI {
   scheduleSend(draft: Draft, sendAt: string): Promise<Draft>
   /** Stops a scheduled send that has not started and returns the draft to edit. */
   cancelScheduledSend(draftId: string): Promise<Draft>
+  reminders(): Promise<Reminder[]>
+  /** Snoozes a conversation, or sets a follow-up reminder for it. Replaces an earlier one. */
+  remind(input: {
+    accountId: string
+    threadId: string
+    kind: 'snooze' | 'followup'
+    at: string
+  }): Promise<Reminder[]>
+  /** Cancels a reminder. A snoozed conversation returns to the inbox at once. */
+  cancelReminder(id: string): Promise<Reminder[]>
   reconcile(draftId: string): Promise<SendResult>
   submissions(): Promise<SubmissionSummary[]>
   /** Retries only the Sent copy of a message that was already sent. */

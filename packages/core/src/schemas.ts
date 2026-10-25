@@ -299,6 +299,16 @@ export const ipcSchemas = {
   send: z.tuple([sendDraftSchema]),
   scheduleSend: z.tuple([sendDraftSchema, z.string().datetime()]),
   cancelScheduledSend: z.tuple([z.string().uuid()]),
+  reminders: z.tuple([]),
+  remind: z.tuple([
+    z.object({
+      accountId: id,
+      threadId: id,
+      kind: z.enum(['snooze', 'followup']),
+      at: z.string().datetime(),
+    }),
+  ]),
+  cancelReminder: z.tuple([z.string().uuid()]),
   reconcile: z.tuple([z.string().uuid()]),
   submissions: z.tuple([]),
   retrySentCopy: z.tuple([z.string().uuid()]),

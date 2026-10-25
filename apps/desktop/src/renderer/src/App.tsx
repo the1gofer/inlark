@@ -35,6 +35,8 @@ import {
   ReplyAll,
   Forward,
   Undo2,
+  Clock,
+  AlarmClock,
   Folder,
   FolderPlus,
   Moon,
@@ -67,6 +69,7 @@ import {
   type MailQuery,
   type Message,
   type MutationTarget,
+  type Reminder,
   type QueryPage,
   type SubmissionSummary,
   type UpdateStatus,
@@ -119,6 +122,7 @@ import { IndexingMeter } from './IndexingMeter'
 import { UpdateNotice } from './UpdateNotice'
 import { offersAction } from './view-actions'
 import { laterLabel } from './later'
+import { RemindDialog, RemindersDialog } from './Reminders'
 import { version as packagedVersion } from '../../../package.json'
 const Composer = lazy(() => import('./Composer').then((m) => ({ default: m.Composer })))
 const SettingsPanel = lazy(() => import('./Settings').then((m) => ({ default: m.SettingsPanel })))
@@ -189,6 +193,11 @@ export function App() {
     [progress, setProgress] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ phase: 'idle' })
   const [folderDialog, setFolderDialog] = useState<FolderDialogState>()
+  const [remindFor, setRemindFor] = useState<{
+    kind: Reminder['kind']
+    targets: MutationTarget[]
+  }>()
+  const [remindersOpen, setRemindersOpen] = useState(false)
   const [moveTargets, setMoveTargets] = useState<MutationTarget[]>(),
     [confirmAction, setConfirmAction] = useState<MailAction>()
   const listRef = useRef<HTMLDivElement>(null),
@@ -330,6 +339,14 @@ export function App() {
     [conversations, drafts.data, route.account],
   )
   const draftItems = allDraftItems.filter((item) => !discarding.has(item.key))
+  const reminders = useQuery({
+    queryKey: ['reminders'],
+    queryFn: () => api.reminders(),
+    enabled: !!accounts.length,
+  })
+  const reminderList = (reminders.data || []).filter((r) =>
+    accounts.some((a) => a.id === r.accountId),
+  )
   const submissions = useQuery({
     queryKey: ['submissions'],
     queryFn: () => api.submissions(),
@@ -387,6 +404,68 @@ export function App() {
       : conversations
           .filter((c) => selected.has(c.key) || (!selected.size && c.key === focused))
           .map((c) => ({ accountId: c.accountId, threadId: c.id }))
+  const askRemind = (kind: Reminder['kind']) => {
+    const chosen = targets()
+    if (chosen.length) setRemindFor({ kind, targets: chosen })
+  }
+  const remind = async (at: Date) => {
+    if (!remindFor) return
+    const { kind, targets: chosen } = remindFor
+    setRemindFor(undefined)
+    const snoozing = kind === 'snooze'
+    if (route.thread && snoozing) {
+      const current = conversations.findIndex(
+        (c) => c.id === route.thread && c.accountId === route.threadAccount,
+      )
+      const preference = settings.afterArchive || 'next'
+      const neighbor =
+        current >= 0 && preference !== 'list'
+          ? preference === 'next'
+            ? (conversations[current + 1] ?? conversations[current - 1])
+            : (conversations[current - 1] ?? conversations[current + 1])
+          : undefined
+      if (neighbor) open(neighbor)
+      else back()
+    }
+    try {
+      let list: Reminder[] = []
+      for (const target of chosen)
+        list = await api.remind({ ...target, kind, at: at.toISOString() })
+      queryClient.setQueryData(['reminders'], list)
+      const made = list.filter(
+        (r) =>
+          r.kind === kind &&
+          chosen.some((t) => t.accountId === r.accountId && t.threadId === r.threadId),
+      )
+      setSelected(new Set())
+      setToast({
+        text:
+          (chosen.length > 1 ? chosen.length + ' conversations · ' : '') +
+          (snoozing ? 'Snoozed until ' : 'Reminder set for ') +
+          laterLabel(at),
+        onUndo: () => {
+          setToast({ text: 'Undoing…' })
+          void Promise.all(made.map((r) => api.cancelReminder(r.id)))
+            .then((results) => {
+              if (results.length) queryClient.setQueryData(['reminders'], results.at(-1))
+              notify(snoozing ? 'Unsnoozed.' : 'Reminder canceled.')
+              return refresh()
+            })
+            .catch(fail)
+        },
+      })
+      if (snoozing) await refresh()
+    } catch (e) {
+      fail(e)
+      await refresh()
+    }
+  }
+  const cancelReminder = (reminder: Reminder) =>
+    api.cancelReminder(reminder.id).then((list) => {
+      queryClient.setQueryData(['reminders'], list)
+      notify(reminder.kind === 'snooze' ? 'Back in your inbox.' : 'Reminder canceled.')
+      return refresh()
+    }, fail)
   const refresh = async () => {
     await Promise.all(
       ['mail', 'thread', 'mailboxes', 'drafts', 'submissions'].map((key) =>
@@ -884,6 +963,7 @@ export function App() {
             queryClient.setQueryData<SubmissionSummary[]>(['submissions'], event.submissions),
           )
       if (event.type === 'update') setUpdateStatus(event.status)
+      if (event.type === 'reminders') queryClient.setQueryData(['reminders'], event.reminders)
       if (event.type === 'notice') {
         notify(event.text, event.tone)
         void queryClient.invalidateQueries({ queryKey: ['drafts'] })
@@ -1089,6 +1169,9 @@ export function App() {
       unread: { run: () => void act('unread'), enabled: canAct },
       read: { run: () => void act('read'), enabled: canAct },
       star: { run: toggleStar, enabled: canAct },
+      snooze: { run: () => askRemind('snooze'), enabled: canAct && !allMatching },
+      followUp: { run: () => askRemind('followup'), enabled: canAct && !allMatching },
+      goReminders: { run: () => setRemindersOpen(true) },
       move: { run: () => openMove(targets()), enabled: canAct && !allMatching },
       undo: { run: () => void undo(), enabled: !blocked && canUndo },
       reply: { run: () => latest && void compose(latest), enabled: inThread },
@@ -1220,6 +1303,26 @@ export function App() {
           run: () => void act('restore'),
           ...limited('restore'),
         },
+        ...(!allMatching
+          ? [
+              {
+                id: 'snooze',
+                label: 'Snooze…',
+                icon: Clock,
+                key: keys('snooze'),
+                keywords: 'later remind defer',
+                run: () => askRemind('snooze'),
+              },
+              {
+                id: 'follow-up',
+                label: 'Remind me if no reply…',
+                icon: AlarmClock,
+                key: keys('followUp'),
+                keywords: 'follow up nudge reminder',
+                run: () => askRemind('followup'),
+              },
+            ]
+          : []),
         ...(latest && route.thread
           ? [
               {
@@ -1287,6 +1390,15 @@ export function App() {
       key: keys('compose'),
       keywords: 'new write email',
       run: () => void compose(),
+    },
+    {
+      id: 'reminders',
+      group: 'Mail',
+      label: 'Snoozed and reminders',
+      icon: Clock,
+      key: keys('goReminders'),
+      keywords: 'snooze follow up later',
+      run: () => setRemindersOpen(true),
     },
     {
       id: 'search-mail',
@@ -1580,6 +1692,11 @@ export function App() {
         draftCount={drafts.data?.filter((d) => !discarding.has('local:' + d.id)).length || 0}
         hasServerDrafts={mailboxCounts.drafts > 0}
         sendingIssues={pendingSends.length}
+        reminderCount={reminderList.length}
+        onOpenReminders={() => {
+          setDrawerOpen(false)
+          setRemindersOpen(true)
+        }}
         unreadCount={mailboxCounts.unread}
         accountUnread={mailboxCounts.byAccount}
         collapsed={collapsed && !phone}
@@ -1660,6 +1777,11 @@ export function App() {
               onUnsubscribe={() => void unsubscribe()}
               onUnlock={() => void unlock()}
               onOpenEncryption={() => openSettings('encryption')}
+              reminders={reminderList.filter(
+                (r) => r.threadId === route.thread && r.accountId === route.threadAccount,
+              )}
+              onRemind={askRemind}
+              onCancelReminder={(reminder) => void cancelReminder(reminder)}
             />
           ) : (
             <EmptyState
@@ -2524,6 +2646,22 @@ export function App() {
           />
         )}
       </Suspense>
+      <RemindDialog
+        kind={remindFor?.kind}
+        onClose={() => setRemindFor(undefined)}
+        onPick={(at) => void remind(at)}
+      />
+      <RemindersDialog
+        open={remindersOpen}
+        onOpenChange={setRemindersOpen}
+        reminders={reminderList}
+        accounts={accounts}
+        onOpen={(reminder) => {
+          setRemindersOpen(false)
+          go({ thread: reminder.threadId, threadAccount: reminder.accountId }, false)
+        }}
+        onCancel={(reminder) => void cancelReminder(reminder)}
+      />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
