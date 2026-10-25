@@ -386,9 +386,22 @@ export function EmailBody({
   const resizeFrame = () => {
     try {
       const element = frame.current
-      const body = element?.contentDocument?.body
-      if (element && body)
-        element.style.height = Math.min(30000, Math.max(80, body.scrollHeight + 8)) + 'px'
+      const doc = element?.contentDocument
+      const body = doc?.body
+      if (element && doc && body) {
+        // Mail laid out wider than the frame, such as a 600px newsletter on a phone, is zoomed
+        // out to fit instead of being cut off at the right edge. The width is measured unzoomed,
+        // since browsers disagree on whether a zoomed page reports zoomed sizes.
+        const root = doc.documentElement
+        const zoom = root.style.zoom
+        root.style.zoom = ''
+        const natural = root.scrollWidth
+        const fit = natural > element.clientWidth + 2 ? element.clientWidth / natural : 1
+        root.style.zoom =
+          fit === 1 ? '' : Math.abs(fit - (Number(zoom) || 1)) > 0.01 ? String(fit) : zoom
+        const height = fit === 1 ? body.scrollHeight : root.getBoundingClientRect().height
+        element.style.height = Math.min(30000, Math.max(80, Math.ceil(height) + 8)) + 'px'
+      }
     } catch (cause) {
       setFrameReady(false)
       const error =
