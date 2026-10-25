@@ -31,6 +31,7 @@ import {
   FileSpreadsheetIcon as FileSpreadsheetIconGlyph,
   FileText as FileTextGlyph,
   FlashIcon as ZapGlyph,
+  UserSwitchIcon as UserSwitchGlyph,
   Folder as FolderGlyph,
   FingerPrintIcon as FingerprintGlyph,
   FolderInputIcon as FolderInputIconGlyph,
@@ -130,6 +131,7 @@ export const FileImport = icon(FileImportGlyph)
 export const FileSpreadsheet = icon(FileSpreadsheetIconGlyph)
 export const FileText = icon(FileTextGlyph)
 export const Zap = icon(ZapGlyph)
+export const UserSwitch = icon(UserSwitchGlyph)
 export const Folder = icon(FolderGlyph)
 export const Fingerprint = icon(FingerprintGlyph)
 export const FolderInput = icon(FolderInputIconGlyph)

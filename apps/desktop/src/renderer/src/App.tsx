@@ -37,6 +37,7 @@ import {
   Undo2,
   Clock,
   AlarmClock,
+  UserSwitch,
   Folder,
   FolderPlus,
   Moon,
@@ -123,6 +124,7 @@ import { UpdateNotice } from './UpdateNotice'
 import { offersAction } from './view-actions'
 import { laterLabel } from './later'
 import { RemindDialog, RemindersDialog } from './Reminders'
+import { introRecipients } from './intro'
 import { version as packagedVersion } from '../../../package.json'
 const Composer = lazy(() => import('./Composer').then((m) => ({ default: m.Composer })))
 const SettingsPanel = lazy(() => import('./Settings').then((m) => ({ default: m.SettingsPanel })))
@@ -603,7 +605,7 @@ export function App() {
     )?.reason
   const compose = async (
     message?: Message,
-    kind: 'reply' | 'replyAll' | 'forward' = 'reply',
+    kind: 'reply' | 'replyAll' | 'forward' | 'intro' = 'reply',
     partial: Partial<Draft> = {},
   ) => {
     const id =
@@ -623,8 +625,16 @@ export function App() {
         notify('This account has no permitted sending identities.', 'error')
         return
       }
+      const intro = message && kind === 'intro' ? introRecipients(message, identities) : undefined
+      if (kind === 'intro' && !intro) {
+        notify('Nobody else is on this message to be introduced to.', 'info')
+        return
+      }
+      if (intro) partial = { to: intro.to, cc: [], bcc: intro.bcc, text: intro.thanks, ...partial }
       const recipients = message
-        ? replyRecipients(message, identities, kind === 'replyAll')
+        ? intro
+          ? { ...intro, cc: [] }
+          : replyRecipients(message, identities, kind === 'replyAll')
         : undefined
       const identity = recipients?.identity || identities[0]
       const signature = identitySignature(settings, identity)
@@ -1345,6 +1355,14 @@ export function App() {
                 icon: Forward,
                 key: keys('forward'),
                 run: () => void compose(latest, 'forward'),
+              },
+              {
+                id: 'instant-intro',
+                label: 'Instant intro',
+                description: 'Reply all and move the person who introduced you to Bcc',
+                icon: UserSwitch,
+                keywords: 'introduction bcc thanks',
+                run: () => void compose(latest, 'intro'),
               },
             ]
           : []),

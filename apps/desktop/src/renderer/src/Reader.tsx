@@ -35,6 +35,7 @@ import {
   Clock,
   AlarmClock,
   X,
+  UserSwitch,
 } from '@inlark/ui/icons'
 import { Tooltip } from '@base-ui/react/tooltip'
 import { Button, IconButton, Dropdown, MenuItem, Spinner } from '@inlark/ui'
@@ -626,7 +627,7 @@ interface ReaderProps {
   position?: string
   onAction: (action: MailAction) => void
   onMove: () => void
-  onReply: (message: Message, kind: 'reply' | 'replyAll' | 'forward') => void
+  onReply: (message: Message, kind: 'reply' | 'replyAll' | 'forward' | 'intro') => void
   onEditDraft: (message: Message) => void
   onDiscardDraft: (message: Message) => void
   notify: (message: string, tone?: 'error' | 'info') => void
@@ -738,6 +739,18 @@ export function Reader({
   const history = messages.filter((m) => !isDraft(m))
   const drafts = messages.filter(isDraft)
   const last = history.at(-1)
+  // An introduction is mail from someone else that also went to people other than you.
+  const ownAddresses = new Set(
+    [account.email, ...(account.aliases || []).map((a) => a.email)].map((e) => e.toLowerCase()),
+  )
+  const introduction =
+    !!last &&
+    last.from.some((a) => !ownAddresses.has(a.email.toLowerCase())) &&
+    [...last.to, ...last.cc].some(
+      (a) =>
+        !ownAddresses.has(a.email.toLowerCase()) &&
+        !last.from.some((f) => f.email.toLowerCase() === a.email.toLowerCase()),
+    )
   const initiallyExpanded = () =>
     new Set(
       messages
@@ -1273,6 +1286,16 @@ export function Reader({
                   Forward
                   <ShortcutHint id="forward" />
                 </Button>
+                {introduction && (
+                  <Button
+                    variant="ghost"
+                    title="Reply all and move the person who introduced you to Bcc"
+                    onClick={() => onReply(last, 'intro')}
+                  >
+                    <UserSwitch size={14} />
+                    Instant intro
+                  </Button>
+                )}
               </div>
             </div>
           )}
