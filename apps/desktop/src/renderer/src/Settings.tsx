@@ -19,6 +19,7 @@ import {
   SquarePen,
   Keyboard,
   LockKeyhole,
+  Zap,
 } from '@inlark/ui/icons'
 import { Button, Dropdown, EmptyState, MenuItem, Modal, Select, Switch } from '@inlark/ui'
 import {
@@ -32,6 +33,7 @@ import { api } from './api'
 import { queryClient, purgeAccountCache } from './cache'
 import { AccountAvatarPicker } from './AccountAvatarPicker'
 import { SignatureSettings } from './SignatureSettings'
+import { SnippetSettings } from './SnippetSettings'
 import { AccountSetup, type SetupMode } from './AccountSetup'
 import { FolderMappingsDialog } from './FolderMappings'
 import { AliasesDialog } from './Aliases'
@@ -262,6 +264,7 @@ export function SettingsPanel({
               ['general', 'General', SlidersHorizontal],
               ['accounts', 'Accounts', Mail],
               ['signatures', 'Signatures', PenLine],
+              ['snippets', 'Snippets', Zap],
               ['encryption', 'Encryption', LockKeyhole],
               ['shortcuts', 'Shortcuts', Keyboard],
               ['about', 'About', Info],
@@ -809,6 +812,16 @@ export function SettingsPanel({
                     </EmptyState>
                   </div>
                 )}
+              </>
+            )}
+            {tab === 'snippets' && (
+              <>
+                <h3 className="m-0 text-[20px] font-[550] tracking-[-0.5px]">Snippets</h3>
+                <p className="settings-lead text-muted mt-1.5 mb-6 mx-0 text-[12px] leading-[1.6]">
+                  Saved text you can insert while writing, with the ⚡ button or Ctrl/Cmd+; . Plain
+                  text only. {'{first_name}'} is replaced with the first recipient’s first name.
+                </p>
+                <SnippetSettings snippets={bootstrap.settings.snippets ?? []} onSave={update} />
               </>
             )}
             {tab === 'encryption' &&

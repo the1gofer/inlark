@@ -2490,6 +2490,7 @@ export function App() {
             onClose={() => setComposer(undefined)}
             onOpenAccounts={() => openSettings('accounts')}
             onOpenEncryption={() => openSettings('encryption')}
+            onOpenSnippets={() => openSettings('snippets')}
             notify={notify}
             onSaved={() => void queryClient.invalidateQueries({ queryKey: ['drafts'] })}
             onScheduled={(draft, undoable) =>

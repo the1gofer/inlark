@@ -21,6 +21,7 @@ import {
   FileText,
   Lock,
   Clock,
+  Zap,
 } from '@inlark/ui/icons'
 import { Modal, Button, IconButton, Select, Spinner } from '@inlark/ui'
 import {
@@ -50,6 +51,7 @@ import {
 } from './shortcuts'
 import { SignatureNode } from './signature'
 import { LaterMenu } from './LaterMenu'
+import { SnippetPicker, fillSnippet, snippetHtml } from './SnippetPicker'
 import { linkTarget } from './link-target'
 import { SignatureParagraph, hasDraftContent, replaceSignature } from './composer-document'
 
@@ -116,6 +118,7 @@ export function Composer({
   onClose,
   onOpenAccounts,
   onOpenEncryption,
+  onOpenSnippets,
   notify,
   onSaved,
   onScheduled,
@@ -129,6 +132,8 @@ export function Composer({
   onOpenAccounts: () => void
   /** Opens Settings → Encryption, to set up or fix this address's key. */
   onOpenEncryption: () => void
+  /** Opens Settings → Snippets, to write the first one. */
+  onOpenSnippets: () => void
   notify: (message: string, tone?: 'error' | 'info') => void
   onSaved: () => void
   /** A send was scheduled: `undoable` for the short undo window, otherwise for later. */
@@ -158,7 +163,8 @@ export function Composer({
     [linkValue, setLinkValue] = useState(''),
     [linkError, setLinkError] = useState(''),
     [editingLink, setEditingLink] = useState(false),
-    [discardOpen, setDiscardOpen] = useState(false)
+    [discardOpen, setDiscardOpen] = useState(false),
+    [snippetOpen, setSnippetOpen] = useState(false)
   const latest = useRef(draft),
     sync = useRef<Promise<unknown>>(Promise.resolve()),
     persisted = useRef(!!initial.serverId || initial.status !== 'local'),
@@ -638,6 +644,11 @@ export function Composer({
       enabled: canEdit,
       ignoreInputs: ignoreInputsForCommand,
     },
+    insertSnippet: {
+      run: () => setSnippetOpen(true),
+      enabled: canEdit,
+      ignoreInputs: ignoreInputsForCommand,
+    },
     toggleEncryption: {
       ignoreInputs: ignoreInputsForCommand,
       run: () => setProtection(protection === 'encrypt' ? 'none' : 'encrypt'),
@@ -1024,6 +1035,14 @@ export function Composer({
             >
               <Paperclip size={15} />
             </IconButton>
+            <IconButton
+              label="Insert snippet"
+              shortcut={keys('insertSnippet')}
+              onClick={() => setSnippetOpen(true)}
+              disabled={!canEdit}
+            >
+              <Zap size={15} />
+            </IconButton>
             {(own || protection !== 'none') && (
               <ProtectionMenu
                 mode={protection}
@@ -1102,6 +1121,19 @@ export function Composer({
         </Dialog.Popup>
       </Dialog.Portal>
       <ContactKeyDialog email={reviewKey} onClose={() => setReviewKey(undefined)} />
+      <SnippetPicker
+        open={snippetOpen}
+        onOpenChange={setSnippetOpen}
+        snippets={settings.snippets || []}
+        onManage={onOpenSnippets}
+        onPick={(snippet) =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent(snippetHtml(fillSnippet(snippet.text, latest.current.to)))
+            .run()
+        }
+      />
       {unlockDialog}
       <Modal
         open={discardOpen}

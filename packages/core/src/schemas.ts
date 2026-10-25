@@ -210,6 +210,16 @@ export const settingsSchema = z.object({
     .record(z.string().max(64), z.array(z.array(z.string().min(1).max(64)).min(1).max(4)).max(16))
     .optional(),
   undoSendSeconds: z.number().int().min(0).max(60).optional(),
+  snippets: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        name: z.string().trim().min(1).max(100),
+        text: z.string().max(20_000),
+      }),
+    )
+    .max(500)
+    .optional(),
 })
 export const ipcSchemas = {
   encryptionStatus: z.tuple([]),

@@ -251,6 +251,13 @@ export interface Settings {
   shortcuts?: Record<string, string[][]>
   /** Seconds a sent message waits before it leaves, so it can be undone. 0 sends at once. */
   undoSendSeconds?: number
+  /** Saved text to insert while writing. `{first_name}` becomes the first recipient's first name. */
+  snippets?: Snippet[]
+}
+export interface Snippet {
+  id: string
+  name: string
+  text: string
 }
 export const defaultSettings: Settings = {
   theme: 'dark',
