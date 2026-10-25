@@ -245,6 +245,25 @@ describe('IMAP indexing and reading', () => {
       expect(await p.conversation(account, thread.id)).toHaveLength(2)
     }
   })
+  it('shows every Gmail copy of a draft as a draft, even without the Draft flag', async () => {
+    // Gmail lists a draft in Drafts and All Mail, and may flag neither copy.
+    const draft = {
+      emailId: '200',
+      messageId: 'draft@x',
+      subject: 'Reply',
+      date: at(1),
+      text: 'Half',
+    }
+    server.deliver('Archive', draft)
+    server.deliver('Drafts', draft)
+    const p = await connected()
+    await sync(p)
+    const [thread] = (await p.query(account, { view: 'all' })).items
+    expect(thread.messages.every((m) => m.keywords.$draft)).toBe(true)
+    const messages = await p.conversation(account, thread.id)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].keywords.$draft).toBe(true)
+  })
   it('reads another location if the first Gmail location disappeared or became stale', async () => {
     const input = { emailId: '123', messageId: 'same@x', date: at(1), text: 'Still here' }
     const inboxUid = server.deliver('INBOX', input)

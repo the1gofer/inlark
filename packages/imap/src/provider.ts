@@ -757,9 +757,11 @@ export class ImapProvider implements MailProvider {
       limit,
       ...(after ? { after } : { offset: position }),
     })
-    const threads = await this.index.threadMessages(
-      this.accountId,
-      page.items.map((i) => i.threadId),
+    const threads = await this.withDraftFlags(
+      await this.index.threadMessages(
+        this.accountId,
+        page.items.map((i) => i.threadId),
+      ),
     )
     const items = page.items.map((row) => {
       const messages = threads.filter((m) => m.threadId === row.threadId)
@@ -872,6 +874,22 @@ export class ImapProvider implements MailProvider {
       rows.map((r) => r.id),
     )
   }
+  /**
+   * Marks every copy of a draft as one, for display. Gmail lists a draft in Drafts and again in
+   * All Mail, and flags only the Drafts copy with \\Draft, if it flags any copy at all. Draft
+   * syncing reads the real flags, since a removed flag there means another client changed it.
+   */
+  private async withDraftFlags(rows: IndexedMessage[]): Promise<IndexedMessage[]> {
+    const drafts = (await this.roleBox('drafts'))?.id
+    const flagged = (row: IndexedMessage) => row.flags.some((f) => f.toLowerCase() === '\\draft')
+    const isDraft = (row: IndexedMessage) => row.mailboxId === drafts || flagged(row)
+    const emails = new Set(rows.filter((r) => r.emailId && isDraft(r)).map((r) => r.emailId))
+    return rows.map((row) =>
+      !flagged(row) && (isDraft(row) || (row.emailId && emails.has(row.emailId)))
+        ? { ...row, flags: [...row.flags, '\\Draft'] }
+        : row,
+    )
+  }
   async conversationMetadata(account: Account, threadIds: string[]): Promise<Message[]> {
     const rows = await this.index.threadMessages(this.accountId, threadIds)
     return (await this.current(rows)).map((m) => toMessage(account.id, m))
@@ -882,7 +900,9 @@ export class ImapProvider implements MailProvider {
     return this.withBodies(account, rows)
   }
   async conversation(account: Account, threadId: string): Promise<Message[]> {
-    const rows = await this.index.threadMessages(this.accountId, [threadId])
+    const rows = await this.withDraftFlags(
+      await this.index.threadMessages(this.accountId, [threadId]),
+    )
     if (!rows.length)
       throw new ProviderError('notFound', 'This conversation is no longer available.')
     const messages = await this.withBodies(account, rows, true)
