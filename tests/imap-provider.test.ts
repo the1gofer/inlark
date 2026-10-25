@@ -259,7 +259,9 @@ describe('IMAP indexing and reading', () => {
     const p = await connected()
     await sync(p)
     const [thread] = (await p.query(account, { view: 'all' })).items
-    expect(thread.messages.every((m) => m.keywords.$draft)).toBe(true)
+    // Listed once, from Drafts, so the Drafts view and its count show it once.
+    expect(thread.messages).toHaveLength(1)
+    expect(thread.messages[0].keywords.$draft).toBe(true)
     const messages = await p.conversation(account, thread.id)
     expect(messages).toHaveLength(1)
     expect(messages[0].keywords.$draft).toBe(true)

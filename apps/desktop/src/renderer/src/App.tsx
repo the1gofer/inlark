@@ -1900,7 +1900,11 @@ export function App() {
         boxesByAccount={mailboxCounts.boxesByAccount}
         route={route}
         view={view}
-        draftCount={drafts.data?.filter((d) => !discarding.has('local:' + d.id)).length || 0}
+        // Drafts on the server, plus local ones not saved there yet: the same count Drafts shows.
+        draftCount={
+          mailboxCounts.drafts +
+          (drafts.data?.filter((d) => !d.serverId && !discarding.has('local:' + d.id)).length || 0)
+        }
         hasServerDrafts={mailboxCounts.drafts > 0}
         sendingIssues={pendingSends.length}
         reminderCount={reminderList.length}
