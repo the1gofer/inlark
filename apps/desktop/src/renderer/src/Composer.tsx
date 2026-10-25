@@ -155,7 +155,9 @@ export function Composer({
         ? 'Delivery unconfirmed'
         : initial.status === 'error'
           ? 'Saved locally · sync failed'
-          : 'Saved on this device',
+          : initial.status === 'synced'
+            ? 'All changes saved'
+            : 'Saved on this device',
     ),
     [sending, setSending] = useState(false),
     [changingFrom, setChangingFrom] = useState(false),
@@ -365,7 +367,11 @@ export function Composer({
         .then(() => {
           if (alive.current)
             setState((current) =>
-              current === 'All changes saved' ? current : 'Saved on this device',
+              current === 'All changes saved'
+                ? current
+                : latest.current.identityId && account.status === 'connected'
+                  ? 'Saved on this device · syncing…'
+                  : 'Saved on this device',
             )
           onSaved()
         })

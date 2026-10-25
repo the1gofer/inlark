@@ -473,6 +473,51 @@ describe('IMAP indexing and reading', () => {
     await sync(p)
     expect((await p.query(account, { view: 'inbox' })).items.map((c) => c.subject)).toEqual(['B'])
   })
+  it('checks unopened custom folders only on the slower full cycle', async () => {
+    server.addMailbox('Projects')
+    const p = await connected({
+      timing: {
+        reconcileMs: 120_000,
+        fullReconcileMs: 15 * 60_000,
+        sentCopyGraceMs: 0,
+        previews: 0,
+      },
+    })
+    await sync(p)
+    const projects = (await p.mailboxes(account)).find((b) => b.name === 'Projects')!
+    server.deliver('Projects', { messageId: 'p@x', subject: 'Plan', date: at(1) })
+    server.deliver('INBOX', { messageId: 'i@x', subject: 'Hello', date: at(2) })
+    await sync(p)
+    const subjects = async (mailboxId?: string) =>
+      (
+        await p.query(account, mailboxId ? { view: 'all', mailboxId } : { view: 'inbox' })
+      ).items.map((c) => c.subject)
+    expect(await subjects()).toEqual(['Hello'])
+    // Opening the folder brings it back into every pass.
+    expect(await subjects(projects.id)).toEqual([])
+    await sync(p)
+    expect(await subjects(projects.id)).toEqual(['Plan'])
+  })
+  it('does not queue another folder check while one is still running', async () => {
+    const p = await connected()
+    const requested = vi.spyOn(p as any, 'requestSync')
+    ;(p as any).syncing = true
+    await p.mailboxes(account)
+    expect(requested).not.toHaveBeenCalled()
+    ;(p as any).syncing = false
+    await p.mailboxes(account)
+    expect(requested).toHaveBeenCalledWith('all')
+  })
+  it('reports commands that hold the connection long enough to slow the app', async () => {
+    const reports: { label: string; background: boolean }[] = []
+    const p = await connected({ slow: (r) => reports.push(r) })
+    vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(5000)
+    await (p as any).run(async () => {}, true, 'sync Big folder')
+    vi.restoreAllMocks()
+    expect(reports).toEqual([
+      { label: 'sync Big folder', background: true, waitedMs: 0, ranMs: 5000 },
+    ])
+  })
   it('falls back to comparing flags when the server lacks CONDSTORE', async () => {
     server.capabilities.delete('CONDSTORE')
     const uid = server.deliver('INBOX', { messageId: 'a@x', subject: 'A', date: at(1) })

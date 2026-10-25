@@ -78,6 +78,8 @@ export interface ImapProviderOptions {
   /** Tests only: trust an extra certificate authority. */
   tls?: { ca?: string | Uint8Array }
   timing?: Partial<Timing>
+  /** Told when a command waited or held the connection long enough to slow the app down. */
+  slow?: (report: { label: string; background: boolean; waitedMs: number; ranMs: number }) => void
 }
 interface Timing {
   /** How often every folder is checked when nothing prompts it. */
@@ -103,7 +105,10 @@ type Task = {
   resolve: (value: unknown) => void
   reject: (error: unknown) => void
   background: boolean
+  label: string
+  queuedAt: number
 }
+const slowTaskMs = 3000
 const roleViews = ['inbox', 'archive', 'sent', 'drafts', 'junk', 'trash']
 const bodyLimit = 10_000_000
 /** Above this, a message is read part by part, so its attachments are not downloaded to show it. */
@@ -144,7 +149,12 @@ export class ImapProvider implements MailProvider {
   private wakeLoop?: () => void
   private pending: 'none' | 'inbox' | 'all' = 'none'
   private lastSync = 0
+  /** A pass that outlasts the refresh interval must not queue another right behind it. */
+  private syncing = false
   private lastFull = new Map<string, number>()
+  /** When each folder was last checked, and when someone last opened it. */
+  private lastChecked = new Map<string, number>()
+  private lastViewed = new Map<string, number>()
   private uidLists = new Map<string, number[]>()
   private searches = new Map<string, { ids: string[]; incomplete: boolean; at: number }>()
   private cursors = new Map<string, ConversationCursor>()
@@ -188,13 +198,19 @@ export class ImapProvider implements MailProvider {
   // Connection and command queue
 
   /** Runs one task at a time on the command connection. User work goes before background work. */
-  private run<T>(task: (port: ImapPort) => Promise<T>, background = false): Promise<T> {
+  private run<T>(
+    task: (port: ImapPort) => Promise<T>,
+    background = false,
+    label = 'command',
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const entry: Task = {
         run: task,
         resolve: resolve as (v: unknown) => void,
         reject,
         background,
+        label,
+        queuedAt: Date.now(),
       }
       const firstBackground = this.queue.findIndex((t) => t.background)
       if (background || firstBackground < 0) this.queue.push(entry)
@@ -208,11 +224,19 @@ export class ImapProvider implements MailProvider {
     try {
       while (this.queue.length) {
         const task = this.queue.shift()!
+        const started = Date.now()
         try {
           task.resolve(await task.run(await this.commandPort()))
         } catch (error) {
           task.reject(error)
         }
+        const waitedMs = started - task.queuedAt,
+          ranMs = Date.now() - started
+        if (
+          this.options.slow &&
+          (ranMs > slowTaskMs || (!task.background && waitedMs > slowTaskMs))
+        )
+          this.options.slow({ label: task.label, background: task.background, waitedMs, ranMs })
       }
     } finally {
       this.pumping = false
@@ -319,7 +343,7 @@ export class ImapProvider implements MailProvider {
   async mailboxes(account: Account): Promise<Mailbox[]> {
     const boxes = await this.index.listMailboxes(this.accountId)
     // The service asks for folders on every refresh and after resume; reconcile when due.
-    if (Date.now() - this.lastSync > 45_000) this.requestSync('all')
+    if (!this.syncing && Date.now() - this.lastSync > 45_000) this.requestSync('all')
     const roles = rolesByPath(this.review(boxes))
     const byPath = new Map(boxes.map((b) => [b.path, b]))
     const move = !this.limits.move
@@ -498,16 +522,35 @@ export class ImapProvider implements MailProvider {
     return boxes.filter((b) => !b.noSelect).sort((a, b) => rank(a) - rank(b))
   }
   private async syncPass(scope: 'inbox' | 'all') {
-    const boxes = await this.run(async (port) => this.refreshFolders(port), true)
-    let changed = false
-    for (const box of this.ordered(boxes)) {
-      if (this.disposed) return
-      if (scope === 'inbox' && !isInbox(box.path)) continue
-      changed = (await this.run((port) => this.syncMailbox(port, box), true)) || changed
+    this.syncing = true
+    try {
+      const boxes = await this.run(async (port) => this.refreshFolders(port), true, 'folder list')
+      let changed = false
+      const roles = rolesByPath(this.review(boxes))
+      const now = Date.now()
+      for (const box of this.ordered(boxes)) {
+        if (this.disposed) return
+        if (scope === 'inbox' && !isInbox(box.path)) continue
+        // Every check holds the one command connection, so folders nobody has opened lately
+        // wait for the slower full cycle instead of costing a round trip on every pass.
+        const frequent =
+          isInbox(box.path) ||
+          roles.has(box.path) ||
+          !box.complete ||
+          now - (this.lastViewed.get(box.id) || 0) < this.timing.fullReconcileMs ||
+          now - (this.lastChecked.get(box.id) || 0) > this.timing.fullReconcileMs
+        if (!frequent) continue
+        changed =
+          (await this.run((port) => this.syncMailbox(port, box), true, 'sync ' + box.path)) ||
+          changed
+        this.lastChecked.set(box.id, Date.now())
+      }
+      this.lastSync = Date.now()
+      if (changed) this.emit({ type: 'changed', accountId: this.accountId })
+      await this.emitProgress()
+    } finally {
+      this.syncing = false
     }
-    this.lastSync = Date.now()
-    if (changed) this.emit({ type: 'changed', accountId: this.accountId })
-    await this.emitProgress()
   }
   private async emitProgress() {
     const boxes = (await this.index.listMailboxes(this.accountId)).filter((b) => !b.noSelect)
@@ -657,24 +700,29 @@ export class ImapProvider implements MailProvider {
       (b) => !b.complete && b.indexedFrom !== null && b.uidValidity,
     )
     if (!box) return false
-    await this.run(async (port) => {
-      const selected = await port.select(box.path)
-      if (selected.uidValidity !== box.uidValidity) return
-      let uids = this.uidLists.get(box.id)
-      if (!uids) {
-        uids = box.indexedFrom! > 1 ? await port.search({ uid: '1:' + (box.indexedFrom! - 1) }) : []
-        this.uidLists.set(box.id, uids)
-      }
-      const below = uids.filter((uid) => uid < box.indexedFrom!)
-      const batch = below.slice(-this.timing.historicalBatch)
-      if (batch.length)
-        await this.store(port, batch, { mailboxId: box.id, uidValidity: selected.uidValidity })
-      await this.index.updateMailbox(this.accountId, box.id, {
-        indexedFrom: batch[0] ?? box.indexedFrom,
-        complete: batch.length === below.length,
-      })
-      if (batch.length === below.length) this.uidLists.delete(box.id)
-    }, true)
+    await this.run(
+      async (port) => {
+        const selected = await port.select(box.path)
+        if (selected.uidValidity !== box.uidValidity) return
+        let uids = this.uidLists.get(box.id)
+        if (!uids) {
+          uids =
+            box.indexedFrom! > 1 ? await port.search({ uid: '1:' + (box.indexedFrom! - 1) }) : []
+          this.uidLists.set(box.id, uids)
+        }
+        const below = uids.filter((uid) => uid < box.indexedFrom!)
+        const batch = below.slice(-this.timing.historicalBatch)
+        if (batch.length)
+          await this.store(port, batch, { mailboxId: box.id, uidValidity: selected.uidValidity })
+        await this.index.updateMailbox(this.accountId, box.id, {
+          indexedFrom: batch[0] ?? box.indexedFrom,
+          complete: batch.length === below.length,
+        })
+        if (batch.length === below.length) this.uidLists.delete(box.id)
+      },
+      true,
+      'history ' + box.path,
+    )
     // Older mail must never look like new mail.
     this.emit({ type: 'changed', accountId: this.accountId, historical: true })
     await this.emitProgress()
@@ -686,22 +734,26 @@ export class ImapProvider implements MailProvider {
     for (const [mailboxId, items] of byMailbox(rows)) {
       const box = (await this.index.listMailboxes(this.accountId)).find((b) => b.id === mailboxId)
       if (!box) continue
-      await this.run(async (port) => {
-        const selected = await port.select(box.path)
-        for (const row of items) {
-          if (row.preview || selected.uidValidity !== row.uidValidity) continue
-          const { text, html } = textParts(row.bodyStructure)
-          const part = text || html
-          if (!part) continue
-          try {
-            const bytes = await port.download(row.uid, partSection(part), 4096, true)
-            const preview = previewText(new TextDecoder().decode(bytes), part === html)
-            if (preview) await this.index.setPreview(this.accountId, row.id, preview)
-          } catch {
-            // A missing preview is harmless; the body loads when the message opens.
+      await this.run(
+        async (port) => {
+          const selected = await port.select(box.path)
+          for (const row of items) {
+            if (row.preview || selected.uidValidity !== row.uidValidity) continue
+            const { text, html } = textParts(row.bodyStructure)
+            const part = text || html
+            if (!part) continue
+            try {
+              const bytes = await port.download(row.uid, partSection(part), 4096, true)
+              const preview = previewText(new TextDecoder().decode(bytes), part === html)
+              if (preview) await this.index.setPreview(this.accountId, row.id, preview)
+            } catch {
+              // A missing preview is harmless; the body loads when the message opens.
+            }
           }
-        }
-      }, true).catch(() => {})
+        },
+        true,
+        'previews ' + box.path,
+      ).catch(() => {})
     }
     this.emit({ type: 'changed', accountId: this.accountId, historical: true })
   }
@@ -731,6 +783,12 @@ export class ImapProvider implements MailProvider {
     const boxes = await this.index.listMailboxes(this.accountId)
     const scope = await this.scope(query, boxes)
     if (!scope) return { items: [], total: 0 }
+    if (query.mailboxId) {
+      const opened =
+        Date.now() - (this.lastViewed.get(query.mailboxId) || 0) > this.timing.fullReconcileMs
+      this.lastViewed.set(query.mailboxId, Date.now())
+      if (opened) this.requestSync('all')
+    }
     const matchAny = conditionsFor(query.matchAny, account.id)
     // A split meant only for other accounts has nothing here.
     if (matchAny && !matchAny.length) return { items: [], total: 0 }
@@ -811,26 +869,30 @@ export class ImapProvider implements MailProvider {
     const ids: string[] = []
     let incomplete = false
     for (const box of boxes)
-      await this.run(async (port) => {
-        const selected = await port.select(box.path)
-        const uids = await port.search(criteria)
-        const capped = uids.slice(-5000)
-        incomplete ||= capped.length < uids.length
-        if (box.uidValidity && selected.uidValidity !== box.uidValidity) {
-          incomplete = true
-          return
-        }
-        const known = await this.index.messagesAt(this.accountId, box.id, capped)
-        const have = new Set(known.map((m) => m.uid))
-        ids.push(...known.map((m) => m.id))
-        ids.push(
-          ...(await this.store(
-            port,
-            capped.filter((uid) => !have.has(uid)),
-            { mailboxId: box.id, uidValidity: selected.uidValidity },
-          )),
-        )
-      })
+      await this.run(
+        async (port) => {
+          const selected = await port.select(box.path)
+          const uids = await port.search(criteria)
+          const capped = uids.slice(-5000)
+          incomplete ||= capped.length < uids.length
+          if (box.uidValidity && selected.uidValidity !== box.uidValidity) {
+            incomplete = true
+            return
+          }
+          const known = await this.index.messagesAt(this.accountId, box.id, capped)
+          const have = new Set(known.map((m) => m.uid))
+          ids.push(...known.map((m) => m.id))
+          ids.push(
+            ...(await this.store(
+              port,
+              capped.filter((uid) => !have.has(uid)),
+              { mailboxId: box.id, uidValidity: selected.uidValidity },
+            )),
+          )
+        },
+        false,
+        'search ' + box.path,
+      )
     const result = { ids, incomplete, at: Date.now() }
     this.searches.set(key, result)
     if (this.searches.size > 20) this.searches.delete(this.searches.keys().next().value!)
@@ -842,32 +904,36 @@ export class ImapProvider implements MailProvider {
     for (const [mailboxId, items] of byMailbox(rows)) {
       const box = boxes.find((b) => b.id === mailboxId)
       if (!box) continue
-      await this.run(async (port) => {
-        const selected = await port.select(box.path)
-        const valid = items.filter((m) => m.uidValidity === selected.uidValidity)
-        const fetched = valid.length
-          ? await port.fetch(uidSet(valid.map((m) => m.uid)), { flags: true })
-          : []
-        await this.index.updateFlags(
-          this.accountId,
-          box.id,
-          fetched.map((m) => ({ uid: m.uid, flags: m.flags || [], modseq: m.modseq })),
-        )
-        const present = new Set(fetched.map((m) => m.uid))
-        const gone = valid.filter((m) => !present.has(m.uid))
-        if (gone.length)
-          await this.index.removeUids(
+      await this.run(
+        async (port) => {
+          const selected = await port.select(box.path)
+          const valid = items.filter((m) => m.uidValidity === selected.uidValidity)
+          const fetched = valid.length
+            ? await port.fetch(uidSet(valid.map((m) => m.uid)), { flags: true })
+            : []
+          await this.index.updateFlags(
             this.accountId,
             box.id,
-            gone.map((m) => m.uid),
+            fetched.map((m) => ({ uid: m.uid, flags: m.flags || [], modseq: m.modseq })),
           )
-        const stale = items.filter((m) => m.uidValidity !== selected.uidValidity)
-        if (stale.length)
-          await this.index.removeMessages(
-            this.accountId,
-            stale.map((m) => m.id),
-          )
-      })
+          const present = new Set(fetched.map((m) => m.uid))
+          const gone = valid.filter((m) => !present.has(m.uid))
+          if (gone.length)
+            await this.index.removeUids(
+              this.accountId,
+              box.id,
+              gone.map((m) => m.uid),
+            )
+          const stale = items.filter((m) => m.uidValidity !== selected.uidValidity)
+          if (stale.length)
+            await this.index.removeMessages(
+              this.accountId,
+              stale.map((m) => m.id),
+            )
+        },
+        false,
+        'flags ' + box.path,
+      )
     }
     return this.index.messages(
       this.accountId,
@@ -959,21 +1025,26 @@ export class ImapProvider implements MailProvider {
         for (const row of needed) if (!shown(row)) add(row, this.bodies.get(row.id)!)
         continue
       }
-      await this.run(async (port) => {
-        const selected = await port.select(box.path)
-        for (const row of needed) {
-          if (row.uidValidity !== selected.uidValidity) continue
-          if (shown(row)) continue
-          const body = await this.body(port, row)
-          if (!body) {
-            await this.index.removeMessages(this.accountId, [row.id])
-            continue
+      await this.run(
+        async (port) => {
+          const selected = await port.select(box.path)
+          for (const row of needed) {
+            if (row.uidValidity !== selected.uidValidity) continue
+            if (shown(row)) continue
+            const body = await this.body(port, row)
+            if (!body) {
+              await this.index.removeMessages(this.accountId, [row.id])
+              continue
+            }
+            const preview = row.preview || previewText(body.text || body.html, !body.text)
+            if (preview && !row.preview)
+              await this.index.setPreview(this.accountId, row.id, preview)
+            add(row, body)
           }
-          const preview = row.preview || previewText(body.text || body.html, !body.text)
-          if (preview && !row.preview) await this.index.setPreview(this.accountId, row.id, preview)
-          add(row, body)
-        }
-      })
+        },
+        false,
+        'bodies ' + box.path,
+      )
     }
     return result
   }
