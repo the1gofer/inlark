@@ -145,6 +145,9 @@ export class ImapProvider implements MailProvider {
   private pending: 'none' | 'inbox' | 'all' = 'none'
   private lastSync = 0
   private lastFull = new Map<string, number>()
+  /** When each folder was last checked, and when someone last opened it. */
+  private lastChecked = new Map<string, number>()
+  private lastViewed = new Map<string, number>()
   private uidLists = new Map<string, number[]>()
   private searches = new Map<string, { ids: string[]; incomplete: boolean; at: number }>()
   private cursors = new Map<string, ConversationCursor>()
@@ -500,10 +503,22 @@ export class ImapProvider implements MailProvider {
   private async syncPass(scope: 'inbox' | 'all') {
     const boxes = await this.run(async (port) => this.refreshFolders(port), true)
     let changed = false
+    const roles = rolesByPath(this.review(boxes))
+    const now = Date.now()
     for (const box of this.ordered(boxes)) {
       if (this.disposed) return
       if (scope === 'inbox' && !isInbox(box.path)) continue
+      // Every check holds the one command connection, so folders nobody has opened lately
+      // wait for the slower full cycle instead of costing a round trip on every pass.
+      const frequent =
+        isInbox(box.path) ||
+        roles.has(box.path) ||
+        !box.complete ||
+        now - (this.lastViewed.get(box.id) || 0) < this.timing.fullReconcileMs ||
+        now - (this.lastChecked.get(box.id) || 0) > this.timing.fullReconcileMs
+      if (!frequent) continue
       changed = (await this.run((port) => this.syncMailbox(port, box), true)) || changed
+      this.lastChecked.set(box.id, Date.now())
     }
     this.lastSync = Date.now()
     if (changed) this.emit({ type: 'changed', accountId: this.accountId })
@@ -731,6 +746,12 @@ export class ImapProvider implements MailProvider {
     const boxes = await this.index.listMailboxes(this.accountId)
     const scope = await this.scope(query, boxes)
     if (!scope) return { items: [], total: 0 }
+    if (query.mailboxId) {
+      const opened =
+        Date.now() - (this.lastViewed.get(query.mailboxId) || 0) > this.timing.fullReconcileMs
+      this.lastViewed.set(query.mailboxId, Date.now())
+      if (opened) this.requestSync('all')
+    }
     const matchAny = conditionsFor(query.matchAny, account.id)
     // A split meant only for other accounts has nothing here.
     if (matchAny && !matchAny.length) return { items: [], total: 0 }

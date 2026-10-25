@@ -473,6 +473,31 @@ describe('IMAP indexing and reading', () => {
     await sync(p)
     expect((await p.query(account, { view: 'inbox' })).items.map((c) => c.subject)).toEqual(['B'])
   })
+  it('checks unopened custom folders only on the slower full cycle', async () => {
+    server.addMailbox('Projects')
+    const p = await connected({
+      timing: {
+        reconcileMs: 120_000,
+        fullReconcileMs: 15 * 60_000,
+        sentCopyGraceMs: 0,
+        previews: 0,
+      },
+    })
+    await sync(p)
+    const projects = (await p.mailboxes(account)).find((b) => b.name === 'Projects')!
+    server.deliver('Projects', { messageId: 'p@x', subject: 'Plan', date: at(1) })
+    server.deliver('INBOX', { messageId: 'i@x', subject: 'Hello', date: at(2) })
+    await sync(p)
+    const subjects = async (mailboxId?: string) =>
+      (
+        await p.query(account, mailboxId ? { view: 'all', mailboxId } : { view: 'inbox' })
+      ).items.map((c) => c.subject)
+    expect(await subjects()).toEqual(['Hello'])
+    // Opening the folder brings it back into every pass.
+    expect(await subjects(projects.id)).toEqual([])
+    await sync(p)
+    expect(await subjects(projects.id)).toEqual(['Plan'])
+  })
   it('falls back to comparing flags when the server lacks CONDSTORE', async () => {
     server.capabilities.delete('CONDSTORE')
     const uid = server.deliver('INBOX', { messageId: 'a@x', subject: 'A', date: at(1) })
