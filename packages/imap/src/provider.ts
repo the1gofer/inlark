@@ -916,18 +916,48 @@ export class ImapProvider implements MailProvider {
     deduplicate = false,
   ): Promise<Message[]> {
     const boxes = await this.index.listMailboxes(this.accountId)
+    const drafts = (await this.roleBox('drafts'))?.id
     const result: Message[] = []
     const displayed = new Set<string>()
-    for (const [mailboxId, items] of byMailbox(rows)) {
-      const box = boxes.find((b) => b.id === mailboxId)
+    const shown = (row: IndexedMessage) =>
+      deduplicate && !!row.emailId && displayed.has(row.emailId)
+    const add = (row: IndexedMessage, body: { html: string; text: string }) => {
+      const preview = row.preview || previewText(body.text || body.html, !body.text)
+      result.push({
+        ...toMessage(account.id, { ...row, preview }),
+        html: body.html,
+        text: body.text,
+        attachments: attachmentsOf(row),
+      })
+      if (row.emailId) displayed.add(row.emailId)
+    }
+    // Each folder switch is a server round trip, slow on a large Gmail folder like All Mail. Read
+    // a Gmail draft from Drafts, otherwise from the smallest folder holding the email.
+    const groups = [...byMailbox(rows)]
+      .map(([mailboxId, items]) => ({ box: boxes.find((b) => b.id === mailboxId), items }))
+      .sort((a, b) =>
+        a.box?.id === drafts
+          ? -1
+          : b.box?.id === drafts
+            ? 1
+            : (a.box?.total ?? 0) - (b.box?.total ?? 0),
+      )
+    for (const { box, items } of groups) {
       if (!box) continue
+      // Gmail labels expose the same email at several UIDs. Keep every location for mutations,
+      // but read its body once. A missing or stale location allows another to load.
+      const needed = items.filter((row) => !shown(row))
+      if (!needed.length) continue
+      // Bodies read earlier need no folder switch at all.
+      if (needed.every((row) => this.bodies.has(row.id))) {
+        for (const row of needed) if (!shown(row)) add(row, this.bodies.get(row.id)!)
+        continue
+      }
       await this.run(async (port) => {
         const selected = await port.select(box.path)
-        for (const row of items) {
+        for (const row of needed) {
           if (row.uidValidity !== selected.uidValidity) continue
-          // Gmail labels expose the same email at several UIDs. Keep every location for
-          // mutations, but read its body once. A missing/stale location allows another to load.
-          if (deduplicate && row.emailId && displayed.has(row.emailId)) continue
+          if (shown(row)) continue
           const body = await this.body(port, row)
           if (!body) {
             await this.index.removeMessages(this.accountId, [row.id])
@@ -935,13 +965,7 @@ export class ImapProvider implements MailProvider {
           }
           const preview = row.preview || previewText(body.text || body.html, !body.text)
           if (preview && !row.preview) await this.index.setPreview(this.accountId, row.id, preview)
-          result.push({
-            ...toMessage(account.id, { ...row, preview }),
-            html: body.html,
-            text: body.text,
-            attachments: attachmentsOf(row),
-          })
-          if (row.emailId) displayed.add(row.emailId)
+          add(row, body)
         }
       })
     }

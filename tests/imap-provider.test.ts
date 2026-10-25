@@ -264,6 +264,26 @@ describe('IMAP indexing and reading', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0].keywords.$draft).toBe(true)
   })
+  it('opens a Gmail email with one folder switch, and none once its body is read', async () => {
+    const input = {
+      emailId: '300',
+      messageId: 'two@x',
+      subject: 'Two copies',
+      date: at(1),
+      text: 'Hi',
+    }
+    server.deliver('Archive', input)
+    server.deliver('INBOX', input)
+    const p = await connected()
+    await sync(p)
+    const [thread] = (await p.query(account, { view: 'inbox' })).items
+    const select = vi.spyOn(server.commandPorts[0], 'select')
+    expect(await p.conversation(account, thread.id)).toHaveLength(1)
+    expect(select).toHaveBeenCalledTimes(1)
+    select.mockClear()
+    expect((await p.conversation(account, thread.id))[0].text?.trim()).toBe('Hi')
+    expect(select).not.toHaveBeenCalled()
+  })
   it('reads another location if the first Gmail location disappeared or became stale', async () => {
     const input = { emailId: '123', messageId: 'same@x', date: at(1), text: 'Still here' }
     const inboxUid = server.deliver('INBOX', input)
