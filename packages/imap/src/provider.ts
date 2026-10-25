@@ -106,6 +106,8 @@ type Task = {
 }
 const roleViews = ['inbox', 'archive', 'sent', 'drafts', 'junk', 'trash']
 const bodyLimit = 10_000_000
+/** Above this, a message is read part by part, so its attachments are not downloaded to show it. */
+const wholeMessageLimit = 256_000
 const partLimit = 5_000_000
 const byMailbox = <T extends { mailboxId: string }>(items: T[]) => {
   const groups = new Map<string, T[]>()
@@ -929,14 +931,14 @@ export class ImapProvider implements MailProvider {
     const cached = this.bodies.get(row.id)
     if (cached) return cached
     let body: { html: string; text: string } | undefined
-    if (row.size <= bodyLimit) {
+    const { html, text } = textParts(row.bodyStructure)
+    if (row.size <= wholeMessageLimit || (!html && !text && row.size <= bodyLimit)) {
       const source = await port.source(row.uid, bodyLimit)
       if (!source) return undefined
       const parsed = await parseMime(source, { maxBytes: bodyLimit })
       body = { html: parsed.html, text: parsed.text }
     } else {
       // Large messages: fetch only the readable parts, never the attachments.
-      const { html, text } = textParts(row.bodyStructure)
       const read = async (part?: typeof html) =>
         part
           ? new TextDecoder().decode(
