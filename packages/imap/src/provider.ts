@@ -875,8 +875,9 @@ export class ImapProvider implements MailProvider {
     )
   }
   /**
-   * Marks every copy of a draft as one. Gmail lists a draft in Drafts and again in All Mail, and
-   * flags only the Drafts copy with \\Draft, if it flags any copy at all.
+   * Marks every copy of a draft as one, for display. Gmail lists a draft in Drafts and again in
+   * All Mail, and flags only the Drafts copy with \\Draft, if it flags any copy at all. Draft
+   * syncing reads the real flags, since a removed flag there means another client changed it.
    */
   private async withDraftFlags(rows: IndexedMessage[]): Promise<IndexedMessage[]> {
     const drafts = (await this.roleBox('drafts'))?.id
@@ -891,14 +892,10 @@ export class ImapProvider implements MailProvider {
   }
   async conversationMetadata(account: Account, threadIds: string[]): Promise<Message[]> {
     const rows = await this.index.threadMessages(this.accountId, threadIds)
-    return (await this.withDraftFlags(await this.current(rows))).map((m) =>
-      toMessage(account.id, m),
-    )
+    return (await this.current(rows)).map((m) => toMessage(account.id, m))
   }
   async messages(account: Account, ids: string[], bodies = false): Promise<Message[]> {
-    const rows = await this.withDraftFlags(
-      await this.current(await this.index.messages(this.accountId, [...new Set(ids)])),
-    )
+    const rows = await this.current(await this.index.messages(this.accountId, [...new Set(ids)]))
     if (!bodies) return rows.map((m) => toMessage(account.id, m))
     return this.withBodies(account, rows)
   }
