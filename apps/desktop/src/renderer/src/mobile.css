@@ -12,6 +12,7 @@
   }
   /* iOS zooms into any field with text smaller than 16px. */
   input,
+  .search-mirror,
   select,
   textarea,
   [contenteditable='true'] {

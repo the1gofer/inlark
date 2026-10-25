@@ -139,6 +139,8 @@ export class FakeImapServer {
   down = false
   /** Like servers whose search index lags behind APPEND: header searches find nothing. */
   laggingSearch = false
+  /** Folder and criteria of every SEARCH, in order. */
+  searches: { path: string; criteria: SearchCriteria }[] = []
   modseq = 1
   ports: FakePort[] = []
   commands: string[] = []
@@ -319,6 +321,14 @@ export class FakePort implements ImapPort {
   async search(criteria: SearchCriteria) {
     this.check('SEARCH')
     const box = this.selectedBox()
+    this.server.searches.push({ path: box.path, criteria })
+    if (criteria.gmailRaw) {
+      // Enough of Gmail's syntax for tests: `from:` and plain words.
+      const words = criteria.gmailRaw.split(/\s+/)
+      const from = words.find((w) => w.startsWith('from:'))?.slice(5)
+      const text = words.filter((w) => !w.includes(':')).join(' ')
+      criteria = { ...criteria, ...(from ? { from } : {}), ...(text ? { text } : {}) }
+    }
     const max = Math.max(0, ...box.messages.map((m) => m.uid))
     const has = (value: string | undefined, needle?: string) =>
       !needle || (value || '').toLowerCase().includes(needle.toLowerCase())

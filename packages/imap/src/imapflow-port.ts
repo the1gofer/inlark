@@ -244,7 +244,10 @@ export class ImapFlowPort implements ImapPort {
   }
   search(criteria: SearchCriteria): Promise<number[]> {
     return this.wrap(async () => {
-      const result = await this.client.search(criteria, { uid: true })
+      const { gmailRaw, ...rest } = criteria
+      const result = await this.client.search(gmailRaw ? { ...rest, gmraw: gmailRaw } : rest, {
+        uid: true,
+      })
       return result ? [...result].sort((a, b) => a - b) : []
     })
   }

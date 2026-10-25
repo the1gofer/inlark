@@ -79,6 +79,7 @@ import {
   type SubmissionSummary,
   type UpdateStatus,
   type View,
+  parseSearch,
 } from '@inlark/core'
 import { api, isDemo } from './api'
 import {
@@ -121,6 +122,7 @@ import { AccountMark } from './AccountMark'
 import { lockVault, useEncryption } from './encryption-ui'
 import { useUnlock } from './encryption-actions'
 import { HintIconButton } from './HintIconButton'
+import { SearchInput } from './SearchInput'
 import { targetAccounts, targetLimit } from './account-limits'
 import { newMessageAccount } from './compose-account'
 import { SubmissionList } from './SendingStatus'
@@ -295,17 +297,18 @@ export function App() {
       [view, route.q, route.folder, settings.splits, queryAccount],
     ),
     activeSplit = splits.find((s) => s.id === route.split)
-  const query: MailQuery = useMemo(
-    () => ({
-      view: route.q ? 'all' : view,
+  const query: MailQuery = useMemo(() => {
+    // Operators such as from: become their own fields; plain words stay a text search.
+    const { starred, ...typed } = parseSearch(route.q || '').search
+    return {
+      view: route.q ? (starred ? 'starred' : 'all') : view,
       accountId: queryAccount,
       mailboxId: route.folder,
-      text: route.q || undefined,
+      ...typed,
       ...(splits.length ? splitQuery(splits, activeSplit) : {}),
       ...filters,
-    }),
-    [view, queryAccount, route.folder, route.q, filters, splits, activeSplit],
-  )
+    }
+  }, [view, queryAccount, route.folder, route.q, filters, splits, activeSplit])
   // Unread conversations in each tab: the main Inbox tab first, then each split.
   const splitUnread = useQueries({
     queries: (splits.length ? [undefined, ...splits] : []).map((split) => {
@@ -2174,13 +2177,7 @@ export function App() {
                 }}
               >
                 <Search size={16} />
-                <input
-                  ref={searchInput}
-                  placeholder="Search mail"
-                  aria-label="Search email"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+                <SearchInput ref={searchInput} value={search} onChange={setSearch} />
                 <kbd>Enter</kbd>
                 <IconButton
                   label="Clear search"
