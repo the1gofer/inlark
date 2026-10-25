@@ -552,6 +552,35 @@ describe('IMAP indexing and reading', () => {
     const bytes = await p.download(account, message.attachments![0])
     expect(new TextDecoder().decode(bytes)).toBe('pdf')
   })
+  it('searches Gmail once in All Mail with its own syntax instead of every label', async () => {
+    server.capabilities.add('X-GM-EXT-1')
+    server.addMailbox('[Gmail]/All Mail', '\\All')
+    const karla = { name: 'Karla', email: 'karla@example.org' }
+    for (const path of ['INBOX', '[Gmail]/All Mail'])
+      server.deliver(path, {
+        emailId: '7',
+        messageId: 'k@x',
+        from: [karla],
+        subject: 'Lunch',
+        date: at(1),
+        text: 'Tacos?',
+      })
+    server.deliver('[Gmail]/All Mail', {
+      emailId: '8',
+      messageId: 'o@x',
+      from: [alex],
+      subject: 'Tacos',
+      date: at(2),
+    })
+    const p = await connected()
+    await sync(p)
+    server.searches = []
+    const found = await p.query(account, { view: 'all', from: 'karla', text: 'tacos' })
+    expect(found.items.map((c) => c.subject)).toEqual(['Lunch'])
+    expect(server.searches).toEqual([
+      { path: '[Gmail]/All Mail', criteria: { gmailRaw: 'from:karla tacos' } },
+    ])
+  })
   it('picks up new Inbox mail announced on the IDLE connection', async () => {
     const p = await connected({
       background: true,
