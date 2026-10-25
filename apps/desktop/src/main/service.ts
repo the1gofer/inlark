@@ -561,9 +561,10 @@ export class MailService {
       input.config.protocol === 'imap' && !input.config.outgoingSameCredentials
         ? input.outgoingPassword
         : undefined
-    const provider = this.createProvider(id, { ...input, outgoingPassword })
-    let accounts: Account[]
     let folders = input.folders ?? previous?.folders
+    // A reconnect, such as after a restart, brings no folders of its own; the saved ones apply.
+    const provider = this.createProvider(id, { ...input, outgoingPassword, folders })
+    let accounts: Account[]
     try {
       accounts = await provider.connect()
       if (!accounts.length)
