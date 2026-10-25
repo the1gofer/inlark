@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "pnpm --filter @inlark/desktop dev",
     "dev:web": "pnpm --filter @inlark/desktop dev:web",
+    "build:web-server": "pnpm --filter @inlark/desktop build:web-server",
+    "start:web-server": "pnpm --filter @inlark/desktop start:web-server",
     "dev:marketing": "pnpm --filter @inlark/marketing dev",
     "build": "turbo build",
     "typecheck": "turbo typecheck",

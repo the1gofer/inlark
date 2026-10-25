@@ -15,7 +15,9 @@
     "dev:web": "vite --config vite.web.config.ts --host 127.0.0.1",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json",
-    "package:linux": "electron-builder --linux AppImage deb rpm --publish never"
+    "package:linux": "electron-builder --linux AppImage deb rpm --publish never",
+    "build:web-server": "vite build --config vite.server.config.ts && vite build --config vite.webapp.config.ts",
+    "start:web-server": "node out/server/index.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -41,6 +43,7 @@
     "idb": "^8.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "ws": "^8.21.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
@@ -48,6 +51,7 @@
     "@types/html-to-text": "^9.0.4",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.0.0",
