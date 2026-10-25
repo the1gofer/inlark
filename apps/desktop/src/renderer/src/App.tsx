@@ -212,7 +212,10 @@ export function App() {
     listHandle = useRef<ConversationListHandle>(null),
     offsets = useRef(new Map<string, number>()),
     lastRead = useRef(''),
-    searchInput = useRef<HTMLInputElement>(null)
+    searchInput = useRef<HTMLInputElement>(null),
+    // While an action runs, a refresh would read the server before it finishes and bring back
+    // conversations the list already hid. The action refreshes once it settles.
+    writing = useRef(false)
   const selectionAnchor = useRef<string | undefined>(undefined)
   const [draftSelected, setDraftSelected] = useState(new Set<string>()),
     draftAnchor = useRef<string | undefined>(undefined)
@@ -503,6 +506,7 @@ export function App() {
       return refresh()
     }, fail)
   const refresh = async () => {
+    if (writing.current) return
     await Promise.all(
       ['mail', 'thread', 'mailboxes', 'drafts', 'submissions', 'split-counts'].map((key) =>
         queryClient.invalidateQueries({ queryKey: [key] }),
@@ -549,6 +553,7 @@ export function App() {
           : (conversations[current - 1] ?? conversations[current + 1])
         : undefined
     setBusy(true)
+    writing.current = true
     suspendPersistence()
     const saved = queryClient.getQueriesData({ queryKey: ['mail'] })
     await queryClient.cancelQueries({ queryKey: ['mail'] })
@@ -615,6 +620,7 @@ export function App() {
       saved.forEach(([key, value]) => queryClient.setQueryData(key, value))
       fail(e)
     } finally {
+      writing.current = false
       resumePersistence()
       setBusy(false)
       setProgress('')
