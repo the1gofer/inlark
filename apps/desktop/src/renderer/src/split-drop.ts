@@ -9,7 +9,38 @@ import {
 /** Drag data for a conversation row, so split tabs accept rows and nothing else. */
 export const conversationDragType = 'application/x-inlark-conversation'
 
-export type RuleChoice = 'sender' | 'domain' | 'other'
+/**
+ * A small card that follows the pointer while a row is dragged, instead of the whole row, which
+ * would cover the split tabs it is being dropped on. It sits below and right of the pointer.
+ */
+export function setConversationDragImage(
+  dataTransfer: DataTransfer,
+  sender: string,
+  subject: string,
+) {
+  const wrapper = document.createElement('div')
+  wrapper.style.cssText =
+    'position:fixed;top:-1000px;left:-1000px;padding:14px 0 0 14px;pointer-events:none;'
+  const card = document.createElement('div')
+  card.style.cssText =
+    'max-width:240px;padding:6px 10px;border-radius:8px;font:12px/1.35 system-ui,sans-serif;' +
+    'background:var(--surface);color:var(--text);border:1px solid var(--accent-solid);' +
+    'box-shadow:0 6px 18px rgb(0 0 0 / 0.3);opacity:0.92;'
+  for (const [text, weight] of [
+    [sender, '600'],
+    [subject, '400'],
+  ]) {
+    const line = document.createElement('div')
+    line.textContent = text
+    line.style.cssText = `font-weight:${weight};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`
+    card.append(line)
+  }
+  wrapper.append(card)
+  document.body.append(wrapper)
+  dataTransfer.setDragImage(wrapper, 0, 0)
+  // The browser snapshots the image during dragstart, so the element can go right after.
+  setTimeout(() => wrapper.remove())
+}
 
 /** Who a conversation is from, skipping your own replies, and the rules it suggests. */
 export function ruleOptions(
