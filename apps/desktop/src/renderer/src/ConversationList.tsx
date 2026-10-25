@@ -226,7 +226,11 @@ export function ConversationList({
       )
       if (index >= 0) virtual.scrollToIndex(index, { align: 'auto' })
     }
-    listRef.current?.focus({ preventScroll: true })
+    // A changed query can come from typing elsewhere, such as editing split rules in Settings;
+    // never pull focus out of a dialog or a field there.
+    const current = document.activeElement
+    if (!current?.closest('[role="dialog"], input, textarea, [contenteditable="true"]'))
+      listRef.current?.focus({ preventScroll: true })
   }, [queryId])
   const lastVisibleIndex = items.at(-1)?.index
   useEffect(() => {
