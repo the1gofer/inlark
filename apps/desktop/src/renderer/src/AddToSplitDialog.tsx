@@ -8,7 +8,7 @@ import {
   type Split,
   type SplitRule,
 } from '@inlark/core'
-import { ruleOptions, withRule, type RuleChoice } from './split-drop'
+import { ruleOptions, withRule } from './split-drop'
 
 const fields = [
   { value: 'from', label: 'From' },
@@ -82,8 +82,9 @@ export interface AddToSplitRequest {
 }
 
 /**
- * Asks what about a conversation a split should match: its sender, the sender's whole domain,
- * or another rule, then adds that rule to the chosen split.
+ * Asks what about a conversation a split should match, then adds that rule to the chosen split.
+ * Its sender and its subject are one click; the rule fields below show what will be saved and
+ * take anything else, such as a domain or an alias it was sent to.
  */
 export function AddToSplitDialog({
   request,
@@ -105,26 +106,23 @@ export function AddToSplitDialog({
   const options = useMemo(() => shown && ruleOptions(shown.conversation, own), [shown, own])
   const [splitId, setSplitId] = useState(NEW),
     [name, setName] = useState(''),
-    [choice, setChoice] = useState<RuleChoice>('sender'),
-    [field, setField] = useState<SplitRule['field']>('to'),
+    [field, setField] = useState<SplitRule['field']>('from'),
     [value, setValue] = useState('')
+  const pick = (next: SplitRule['field']) => {
+    setField(next)
+    setValue(options?.defaults[next] || '')
+  }
   useEffect(() => {
     if (!request || !options) return
     setSplitId(request.splitId || splits[0]?.id || NEW)
     setName(options.sender?.name || options.domain || '')
-    setChoice(options.sender ? 'sender' : 'other')
-    const other = options.defaults.to ? 'to' : 'subject'
-    setField(other)
-    setValue(options.defaults[other])
+    pick(options.sender ? 'from' : 'subject')
   }, [request])
   if (!options) return null
   const sender = options.sender
-  const rule: SplitRule =
-    choice === 'sender'
-      ? { field: 'from', value: options.defaults.from }
-      : choice === 'domain'
-        ? { field: 'from', value: '@' + options.domain }
-        : { field, value }
+  const rule: SplitRule = { field, value }
+  const is = (preset: SplitRule['field']) =>
+    field === preset && value.trim() === options.defaults[preset]
   const target = splits.find((s) => s.id === splitId)
   const ready = !!rule.value.trim() && (target || name.trim())
   const submit = () => {
@@ -175,49 +173,39 @@ export function AddToSplitDialog({
         <div className="mt-4" role="radiogroup" aria-label="What to match">
           {sender && (
             <Choice
-              checked={choice === 'sender'}
-              onSelect={() => setChoice('sender')}
+              checked={is('from')}
+              onSelect={() => pick('from')}
               title={'This sender' + (sender.name ? ': ' + sender.name : '')}
               detail={options.defaults.from}
             />
           )}
-          {options.domain && (
+          {options.defaults.subject && (
             <Choice
-              checked={choice === 'domain'}
-              onSelect={() => setChoice('domain')}
-              title={'Everyone at ' + options.domain}
-              detail={'@' + options.domain}
+              checked={is('subject')}
+              onSelect={() => pick('subject')}
+              title="This subject"
+              detail={options.defaults.subject}
             />
           )}
-          <Choice
-            checked={choice === 'other'}
-            onSelect={() => setChoice('other')}
-            title="Something else"
-            detail="An alias it was sent to, or words in the subject"
-          />
-          {choice === 'other' && (
-            <div className="flex items-center gap-2 mt-2.5">
-              <Select
-                aria-label="Match"
-                className="w-32 shrink-0"
-                value={field}
-                options={fields}
-                onValueChange={(next) => {
-                  setField(next)
-                  setValue(options.defaults[next])
-                }}
-              />
-              <input
-                className="flex-1 min-w-0 text-[12px]"
-                value={value}
-                maxLength={320}
-                aria-label={fields.find((f) => f.value === field)!.label}
-                spellCheck={false}
-                autoCapitalize="off"
-                onChange={(e) => setValue(e.target.value)}
-              />
-            </div>
-          )}
+          <div className="flex items-center gap-2 mt-3">
+            <Select
+              aria-label="Match"
+              className="w-32 shrink-0"
+              value={field}
+              options={fields}
+              onValueChange={pick}
+            />
+            <input
+              className="flex-1 min-w-0 text-[12px]"
+              value={value}
+              maxLength={320}
+              aria-label={fields.find((f) => f.value === field)!.label}
+              placeholder={field === 'subject' ? 'Words in the subject' : 'Address or @domain'}
+              spellCheck={false}
+              autoCapitalize="off"
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </div>
         </div>
         <div className="modal-actions flex justify-end gap-2 mt-6">
           <Button type="button" onClick={onClose}>

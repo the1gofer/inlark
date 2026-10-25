@@ -193,7 +193,8 @@ export function App() {
     [settingsTab, setSettingsTab] = useState('general'),
     [splitDraft, setSplitDraft] = useState<Split>(),
     [addToSplit, setAddToSplit] = useState<AddToSplitRequest>(),
-    [dropOver, setDropOver] = useState<string>()
+    [dropOver, setDropOver] = useState<string>(),
+    [dragging, setDragging] = useState(false)
   const [composer, setComposer] = useState<Draft>(),
     [paletteOpen, setPaletteOpen] = useState(false),
     [help, setHelp] = useState(false)
@@ -948,6 +949,24 @@ export function App() {
   useEffect(() => {
     setDrawerOpen(false)
   }, [phone, route.view, route.account, route.folder, route.q, settingsOpen, paletteOpen, composer])
+  useEffect(() => {
+    // Outline every split tab while a conversation is dragged, so the targets stand out.
+    const start = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes(conversationDragType)) setDragging(true)
+    }
+    const end = () => {
+      setDragging(false)
+      setDropOver(undefined)
+    }
+    document.addEventListener('dragstart', start)
+    document.addEventListener('dragend', end)
+    document.addEventListener('drop', end)
+    return () => {
+      document.removeEventListener('dragstart', start)
+      document.removeEventListener('dragend', end)
+      document.removeEventListener('drop', end)
+    }
+  }, [])
   useEffect(() => {
     setSearch(route.q || '')
   }, [route.q])
@@ -2197,12 +2216,13 @@ export function App() {
                       className={cn(
                         'split-tab inline-flex items-center gap-1.5 shrink-0 snap-start h-7 py-0 px-2.75 rounded-md border',
                         'border-solid border-border bg-transparent text-[12px] text-secondary whitespace-nowrap',
-                        'transition-[color,background,border-color] duration-120 hover:bg-hover hover:text-foreground',
+                        'transition-[color,background,border-color,transform] duration-120 hover:bg-hover hover:text-foreground',
                         active &&
                           'active bg-selected border-border-strong text-strong font-medium hover:bg-selected',
+                        split && dragging && 'border-dashed border-primary-solid text-strong',
                         split &&
                           dropOver === split.id &&
-                          'drop-target border-primary-solid bg-primary-tint text-strong',
+                          'drop-target border-solid bg-primary-solid text-white scale-110 shadow-md',
                       )}
                       onClick={() => showSplit(split)}
                       {...(split ? dropTarget(split.id) : {})}
@@ -2222,8 +2242,9 @@ export function App() {
                 <IconButton
                   className={cn(
                     'shrink-0',
+                    dragging && 'border border-dashed border-primary-solid',
                     dropOver === NEW_SPLIT &&
-                      'border border-solid border-primary-solid bg-primary-tint',
+                      'border-solid bg-primary-solid text-white scale-110 shadow-md',
                   )}
                   label="Edit split inbox, or drop a conversation here for a new split"
                   onClick={() => openSettings('splits')}
