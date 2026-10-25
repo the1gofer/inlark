@@ -2,7 +2,8 @@ import { cn, Avatar } from '@inlark/ui'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { Address } from '@inlark/core'
-import { matchAddresses, mentionLabel, mentionQuery, type MentionQuery } from './mentions'
+import { useContactMatches } from './contacts'
+import { mentionLabel, mentionQuery, type MentionQuery } from './mentions'
 
 const width = 300
 
@@ -48,7 +49,8 @@ export function MentionMenu({
     }
   }, [editor])
   useEffect(() => setActive(0), [mention?.query])
-  const matches = mention ? matchAddresses(suggestions, mention.query) : []
+  const found = useContactMatches(suggestions, mention?.query || '')
+  const matches = mention ? found : []
   const showing = !!editor && !!mention && matches.length > 0 && dismissed !== mention.from
   const highlighted = Math.min(active, matches.length - 1)
   useLayoutEffect(() => {
