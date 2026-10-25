@@ -9,7 +9,7 @@ import { AccountMark } from './AccountMark'
 import { HintIconButton } from './HintIconButton'
 import { actionLimit } from './account-limits'
 import { useShortcutText } from './shortcuts'
-import { conversationDragType, setConversationDragImage } from './split-drop'
+import { conversationDragType } from './split-drop'
 
 // Rows are dragged onto split tabs with a mouse; on touchscreens holding a row selects it instead.
 const canDrag = () => typeof matchMedia !== 'undefined' && matchMedia('(pointer: fine)').matches
@@ -90,7 +90,6 @@ export function ConversationRow({
         event.dataTransfer.effectAllowed = 'link'
         event.dataTransfer.setData(conversationDragType, c.key)
         event.dataTransfer.setData('text/plain', subject)
-        setConversationDragImage(event.dataTransfer, senderLabel(c), subject)
       }}
       onTouchStart={() => {
         held.current = false
