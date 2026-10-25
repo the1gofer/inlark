@@ -209,6 +209,16 @@ describe('IMAP account setup', () => {
     const review = await service.setFolderMappings(accountId, { archive: { path: 'INBOX' } })
     expect(review.mappings.archive).toEqual({ path: 'INBOX', source: 'user' })
   })
+  it('keeps a chosen folder after a restart', async () => {
+    server.addMailbox('Kept')
+    await service.connect(input)
+    await service.setFolderMappings(accountId, { archive: { path: 'Kept' } })
+    await restart()
+    expect((await service.folderMappings(accountId)).mappings.archive).toEqual({
+      path: 'Kept',
+      source: 'user',
+    })
+  })
 })
 
 describe('legacy connection migration', () => {
