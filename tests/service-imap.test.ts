@@ -310,6 +310,24 @@ describe('legacy connection migration', () => {
 describe('IMAP sending', () => {
   beforeEach(() => service.connect(input))
 
+  const answer = async () => {
+    server.deliver('INBOX', { messageId: 'question@x', subject: 'Plans', text: 'Friday?' })
+    await (service as any).providers.get('imap-connection').syncPass('all')
+    const [thread] = (await service.query({ view: 'inbox' })).items
+    await service.send({ ...draft, replyThreadId: thread.id, inReplyTo: ['<question@x>'] })
+  }
+  it('moves a conversation out of the inbox once the reply to it is sent', async () => {
+    await answer()
+    await vi.waitFor(() => expect(server.box('INBOX').messages).toHaveLength(0))
+    expect(server.box('Archive').messages).toHaveLength(1)
+  })
+  it('leaves a replied conversation in the inbox when archiving on reply is off', async () => {
+    await service.setSettings({ ...(await service.bootstrap()).settings, archiveOnReply: false })
+    await answer()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(server.box('INBOX').messages).toHaveLength(1)
+  })
+
   it('persists MIME, envelope and journal before submitting, then files the Sent copy', async () => {
     submit.mockImplementationOnce(async (_settings, envelope) => {
       expect((await journal()).state).toBe('submitting')

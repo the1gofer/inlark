@@ -1835,6 +1835,11 @@ export class MailService {
         await this.removePreviousDraft(provider, account, draft).catch(() =>
           this.log('old-draft-cleanup-failed'),
         )
+      // A conversation you answered leaves the inbox; the next reply to it brings it back.
+      if (draft.replyThreadId && this.settings.archiveOnReply !== false)
+        void this.moveThread(account.id, draft.replyThreadId, 'inbox', 'archive').catch(() =>
+          this.log('archive-on-reply-failed'),
+        )
       this.emit({ type: 'changed', accountId: draft.accountId })
       return this.sendResult(journal, uploaded)
     } catch (error) {
