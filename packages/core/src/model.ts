@@ -775,6 +775,11 @@ export interface DesktopMailAPI {
   replaceUncertain(draftId: string): Promise<Draft>
   dismissSubmission(draftId: string): Promise<void>
   stageAttachments(protectedDraft?: boolean): Promise<StagedAttachment[]>
+  /** Stages files dropped on the composer. */
+  stageAttachmentFiles(
+    files: { name: string; data: Uint8Array }[],
+    protectedDraft?: boolean,
+  ): Promise<StagedAttachment[]>
   attachment(accountId: string, attachment: Attachment, open: boolean): Promise<void>
   inlineImage(accountId: string, attachment: Attachment): Promise<string>
   remoteImage(url: string, userInitiated?: boolean): Promise<string | null>

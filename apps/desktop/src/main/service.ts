@@ -2089,7 +2089,31 @@ export class MailService {
       properties: ['openFile', 'multiSelections'],
     })
     if (result.canceled) return []
+    const files = []
+    for (const path of result.filePaths)
+      files.push({ name: basename(path), size: (await stat(path)).size, path })
+    return this.stageFiles(files, protectedDraft)
+  }
+  /** Stages files dropped on the composer, which arrive as bytes rather than paths. */
+  stageAttachmentFiles = async (
+    files: { name: string; data: Uint8Array }[],
+    protectedDraft = false,
+  ): Promise<StagedAttachment[]> =>
+    this.stageFiles(
+      files.map((file) => ({
+        name: basename(file.name.replace(/[\0-\x1f\\]/g, '_')) || 'file',
+        size: file.data.byteLength,
+        data: file.data,
+      })),
+      protectedDraft,
+    )
+  private async stageFiles(
+    files: { name: string; size: number; path?: string; data?: Uint8Array }[],
+    protectedDraft: boolean,
+  ): Promise<StagedAttachment[]> {
     if (this.protectionTransition) throw new Error('The vault is locking.')
+    if (files.some((file) => file.size > 100_000_000))
+      throw new Error('Files over 100 MB cannot be attached.')
     const directory = join(this.store.directory, 'attachments')
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const attachments: StagedAttachment[] = []
@@ -2105,20 +2129,20 @@ export class MailService {
       '.zip': 'application/zip',
       '.ics': 'text/calendar',
     }
-    for (const path of result.filePaths) {
-      const size = (await stat(path)).size
-      if (size > 100_000_000) throw new Error('Files over 100 MB cannot be attached.')
+    for (const file of files) {
       const a = {
         id: randomUUID(),
-        name: basename(path),
-        size,
-        type: types[extname(path).toLowerCase()] || 'application/octet-stream',
+        name: file.name,
+        size: file.size,
+        type: types[extname(file.name).toLowerCase()] || 'application/octet-stream',
       }
+      const target = join(directory, a.id)
       if (protectedDraft) {
-        await this.protectStagedAttachment(a, await readFile(path))
+        await this.protectStagedAttachment(a, file.data || (await readFile(file.path!)))
       } else {
-        await copyFile(path, join(directory, a.id))
-        await chmod(join(directory, a.id), 0o600)
+        if (file.data) await writeFile(target, file.data, { mode: 0o600 })
+        else await copyFile(file.path!, target)
+        await chmod(target, 0o600)
       }
       this.staging.set(a.id, a)
       attachments.push(a)

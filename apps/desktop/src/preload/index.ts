@@ -55,6 +55,7 @@ const methods = [
   'replaceUncertain',
   'dismissSubmission',
   'stageAttachments',
+  'stageAttachmentFiles',
   'attachment',
   'inlineImage',
   'remoteImage',
