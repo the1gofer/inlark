@@ -21,6 +21,24 @@ export type ServerMessage =
   | { t: 'notify'; id: string; title: string; body: string }
   | { t: 'reload' }
 
+/** Types a browser can show by itself, so opening an attachment shows it in a tab. */
+const viewable: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  txt: 'text/plain',
+}
+/** The type to show an attachment as, judged by its name when the sender gave a generic type. */
+export function viewableType(type: string, name: string): string | undefined {
+  const given = type.toLowerCase().split(';')[0].trim()
+  if (Object.values(viewable).includes(given)) return given
+  if (given && given !== 'application/octet-stream') return undefined
+  return viewable[name.toLowerCase().split('.').pop() || '']
+}
+
 // Structured clone (Electron IPC) keeps byte arrays and `undefined` arguments; JSON turns
 // them into objects and nulls, which the input schemas reject. Tag them instead.
 export function encode(message: ClientMessage | ServerMessage): string {

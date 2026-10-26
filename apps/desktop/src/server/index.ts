@@ -16,7 +16,7 @@ import { imapProviders } from '../main/imap-accounts'
 import { discover } from '../main/discovery-transport'
 import { configureShim, notificationClicked } from './electron-shim'
 import { broadcast, callContext, Client, clients, type Download } from './clients'
-import { decode, type ClientMessage } from './protocol'
+import { decode, viewableType, type ClientMessage } from './protocol'
 import { Auth } from './auth'
 import { loginPage } from './login-page'
 
@@ -315,6 +315,52 @@ async function main() {
         }
         uploads.set(id, { path, expires: Date.now() + transferLifetime })
         return send(response, 200, JSON.stringify({ id }), 'application/json')
+      }
+      // The browser fetches attachments itself, from the click, so nothing blocks the file
+      // and the browser shows its own progress. Viewable types can open in a tab.
+      if (url.pathname === '/attachment' && request.method === 'GET') {
+        const query = url.searchParams
+        const accountId = query.get('account') || ''
+        const parsed = ipcSchemas.attachment.safeParse([
+          accountId,
+          {
+            blobId: query.get('blob') || '',
+            name: query.get('name') || '',
+            type: query.get('type') || '',
+            size: 0,
+          },
+          query.get('open') === '1',
+        ])
+        if (!parsed.success) return send(response, 400, 'This attachment link is not valid.')
+        const [, attachment, open] = parsed.data
+        let bytes: Uint8Array
+        try {
+          bytes = await service.attachmentBytes(accountId, attachment)
+        } catch (error) {
+          return send(
+            response,
+            502,
+            error instanceof Error ? error.message : 'The attachment could not be downloaded.',
+          )
+        }
+        const name =
+          basename(attachment.name)
+            .replace(/[\0-\x1f/\\]/g, '_')
+            .slice(0, 200) || 'attachment'
+        const shown = open ? viewableType(attachment.type, name) : undefined
+        const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, '_')
+        response.writeHead(200, {
+          'Content-Type': shown || 'application/octet-stream',
+          'Content-Length': bytes.byteLength,
+          'Content-Disposition': `${shown ? 'inline' : 'attachment'}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+          'Cache-Control': 'no-store',
+          // Images and text get no scripts or same-origin access. Browsers' PDF viewers refuse
+          // to run sandboxed, and do not run a document's scripts with this origin anyway.
+          ...(shown && shown !== 'application/pdf'
+            ? { 'Content-Security-Policy': "frame-ancestors 'self'; sandbox" }
+            : {}),
+        })
+        return response.end(bytes)
       }
       if (url.pathname.startsWith('/download/') && request.method === 'GET') {
         const download = downloads.get(url.pathname.slice('/download/'.length))
