@@ -24,6 +24,7 @@ import {
   type ProviderPage,
   type SubmissionOutcome,
   conditionsFor,
+  gmailSearch,
 } from '@inlark/core'
 import {
   attachmentsOf,
@@ -109,6 +110,7 @@ type Task = {
   queuedAt: number
 }
 const slowTaskMs = 3000
+const searchCap = 1000
 const roleViews = ['inbox', 'archive', 'sent', 'drafts', 'junk', 'trash']
 const bodyLimit = 10_000_000
 /** Above this, a message is read part by part, so its attachments are not downloaded to show it. */
@@ -162,6 +164,8 @@ export class ImapProvider implements MailProvider {
   private state: 'connected' | 'offline' | 'authentication' = 'connected'
   private lastFailure?: { at: number; error: unknown }
   private limits: AccountLimits = {}
+  /** The server speaks Gmail's extensions, learned when the command connection opens. */
+  private gmail = false
   constructor(private options: ImapProviderOptions) {
     this.accountId = accountKey(options.connectionId, 'imap')
     this.timing = { ...defaultTiming, ...options.timing }
@@ -267,6 +271,7 @@ export class ImapProvider implements MailProvider {
       }
       this.command = port
       this.limits = limitsFor(port.capabilities)
+      this.gmail = port.capabilities.has('X-GM-EXT-1')
       return port
     })().finally(() => (this.connecting = undefined))
     return this.connecting
@@ -851,21 +856,29 @@ export class ImapProvider implements MailProvider {
       ...(incomplete ? { incomplete: true } : {}),
     }
   }
-  /** Server search in each relevant folder; matches not yet indexed are indexed on the way. */
-  private async search(query: MailQuery, boxes: IndexedMailbox[]) {
-    const key = JSON.stringify([query, boxes.map((b) => b.id)])
+  /**
+   * Server search in each relevant folder; matches not yet indexed are indexed on the way. On
+   * Gmail every email is in All Mail, so one Gmail search there replaces a search per label.
+   */
+  private async search(query: MailQuery, scope: IndexedMailbox[]) {
+    const key = JSON.stringify([query, scope.map((b) => b.id)])
     const cached = this.searches.get(key)
     if (cached && Date.now() - cached.at < 60_000) return cached
-    const criteria: SearchCriteria = {
-      ...(query.text ? { text: query.text } : {}),
-      ...(query.from ? { from: query.from } : {}),
-      ...(query.to ? { to: query.to } : {}),
-      ...(query.subject ? { subject: query.subject } : {}),
-      ...(query.after ? { since: new Date(query.after) } : {}),
-      ...(query.before ? { before: new Date(query.before) } : {}),
-      ...(query.unread ? { seen: false } : {}),
-      ...(query.view === 'starred' ? { flagged: true } : {}),
-    }
+    const gmail = this.gmail
+    const allMail = gmail ? scope.find((b) => b.specialUse === '\\All') : undefined
+    const boxes = allMail && scope.length > 1 ? [allMail] : scope
+    const criteria: SearchCriteria = gmail
+      ? { gmailRaw: gmailSearch(query) }
+      : {
+          ...(query.text ? { text: query.text } : {}),
+          ...(query.from ? { from: query.from } : {}),
+          ...(query.to ? { to: query.to } : {}),
+          ...(query.subject ? { subject: query.subject } : {}),
+          ...(query.after ? { since: new Date(query.after) } : {}),
+          ...(query.before ? { before: new Date(query.before) } : {}),
+          ...(query.unread ? { seen: false } : {}),
+          ...(query.view === 'starred' ? { flagged: true } : {}),
+        }
     const ids: string[] = []
     let incomplete = false
     for (const box of boxes)
@@ -873,7 +886,8 @@ export class ImapProvider implements MailProvider {
         async (port) => {
           const selected = await port.select(box.path)
           const uids = await port.search(criteria)
-          const capped = uids.slice(-5000)
+          // The newest matches; indexing thousands of unseen emails first would stall the results.
+          const capped = uids.slice(-searchCap)
           incomplete ||= capped.length < uids.length
           if (box.uidValidity && selected.uidValidity !== box.uidValidity) {
             incomplete = true
@@ -945,7 +959,7 @@ export class ImapProvider implements MailProvider {
    * All Mail, and flags only the Drafts copy with \\Draft, if it flags any copy at all. Draft
    * syncing reads the real flags, since a removed flag there means another client changed it.
    */
-  private async withDraftFlags(rows: IndexedMessage[]): Promise<IndexedMessage[]> {
+  private async withDraftFlags(rows: IndexedMessage[], dedupe = true): Promise<IndexedMessage[]> {
     const drafts = (await this.roleBox('drafts'))?.id
     const flagged = (row: IndexedMessage) => row.flags.some((f) => f.toLowerCase() === '\\draft')
     const isDraft = (row: IndexedMessage) => row.mailboxId === drafts || flagged(row)
@@ -955,7 +969,9 @@ export class ImapProvider implements MailProvider {
       rows.filter((r) => r.emailId && r.mailboxId === drafts).map((r) => r.emailId),
     )
     return rows
-      .filter((row) => row.mailboxId === drafts || !(row.emailId && filed.has(row.emailId)))
+      .filter(
+        (row) => !dedupe || row.mailboxId === drafts || !(row.emailId && filed.has(row.emailId)),
+      )
       .map((row) =>
         !flagged(row) && (isDraft(row) || (row.emailId && emails.has(row.emailId)))
           ? { ...row, flags: [...row.flags, '\\Draft'] }
@@ -967,7 +983,11 @@ export class ImapProvider implements MailProvider {
     return (await this.current(rows)).map((m) => toMessage(account.id, m))
   }
   async messages(account: Account, ids: string[], bodies = false): Promise<Message[]> {
-    const rows = await this.current(await this.index.messages(this.accountId, [...new Set(ids)]))
+    // Gmail may leave a draft unflagged; opening it to edit relies on it reading as a draft.
+    const rows = await this.withDraftFlags(
+      await this.current(await this.index.messages(this.accountId, [...new Set(ids)])),
+      false,
+    )
     if (!bodies) return rows.map((m) => toMessage(account.id, m))
     return this.withBodies(account, rows)
   }

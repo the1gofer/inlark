@@ -266,6 +266,17 @@ describe('IMAP indexing and reading', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0].keywords.$draft).toBe(true)
   })
+  it('reads an unflagged Gmail draft as a draft when it is opened to edit', async () => {
+    const draft = { emailId: '201', messageId: 'plain@x', subject: 'Plan', date: at(1), text: 'Hi' }
+    server.deliver('Drafts', draft)
+    server.deliver('Archive', draft)
+    const p = await connected()
+    await sync(p)
+    const [thread] = (await p.query(account, { view: 'drafts' })).items
+    const [message] = await p.messages(account, [thread.messages[0].id], true)
+    expect(message.keywords.$draft).toBe(true)
+    expect(message.text?.trim()).toBe('Hi')
+  })
   it('opens a Gmail email with one folder switch, and none once its body is read', async () => {
     const input = {
       emailId: '300',
