@@ -1,4 +1,4 @@
-import type { MailQuery } from './model'
+import type { MailQuery, SearchField } from './model'
 
 /** Operators the search box understands, as in Gmail and Superhuman. */
 export const searchOperators = [
@@ -110,8 +110,29 @@ export function parseSearch(
   return { tokens, search }
 }
 
-/** A Gmail search (`X-GM-RAW`) for a query, so Gmail's own index answers it. */
+/**
+ * A Gmail search (`X-GM-RAW`) for a query, so Gmail's own index answers it. The typed search goes
+ * to Gmail exactly as written, quotes, OR and all; only filters set some other way are added.
+ */
 export function gmailSearch(query: MailQuery): string {
+  if (!query.search?.trim()) return gmailFields(query)
+  const rest = withoutTyped(query)
+  const extra = gmailFields(rest)
+  return extra ? '(' + query.search.trim() + ') ' + extra : query.search.trim()
+}
+
+/** The query without the fields its typed search set, which Gmail reads from the text itself. */
+export function withoutTyped(query: MailQuery): MailQuery {
+  const typed = new Set<SearchField>(query.search ? query.searchFields : [])
+  const rest: MailQuery = { ...query }
+  for (const field of typed) if (field !== 'starred') delete rest[field]
+  if (typed.has('starred') && rest.view === 'starred') rest.view = 'all'
+  delete rest.search
+  delete rest.searchFields
+  return rest
+}
+
+function gmailFields(query: MailQuery): string {
   const quote = (value: string) => {
     const v = value.replace(/"/g, '').trim()
     return /\s/.test(v) ? '"' + v + '"' : v

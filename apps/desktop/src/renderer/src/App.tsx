@@ -80,6 +80,7 @@ import {
   type UpdateStatus,
   type View,
   parseSearch,
+  type SearchField,
 } from '@inlark/core'
 import { api, isDemo } from './api'
 import {
@@ -300,12 +301,18 @@ export function App() {
     activeSplit = splits.find((s) => s.id === route.split)
   const query: MailQuery = useMemo(() => {
     // Operators such as from: become their own fields; plain words stay a text search.
+    // Gmail accounts take the typed text as is instead, so results match Gmail's own search.
     const { starred, ...typed } = parseSearch(route.q || '').search
+    const searchFields = [
+      ...(Object.keys(typed) as SearchField[]),
+      ...(starred ? (['starred'] as const) : []),
+    ].filter((field) => field === 'starred' || filters[field] === undefined)
     return {
       view: route.q ? (starred ? 'starred' : 'all') : view,
       accountId: queryAccount,
       mailboxId: route.folder,
       ...typed,
+      ...(route.q?.trim() ? { search: route.q.trim(), searchFields } : {}),
       ...(splits.length ? splitQuery(splits, activeSplit) : {}),
       ...filters,
     }

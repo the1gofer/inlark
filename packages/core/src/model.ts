@@ -172,6 +172,9 @@ export interface Identity {
   textSignature?: string
   htmlSignature?: string
 }
+/** A query field that typing an operator in the search box can set; `starred` is `is:starred`. */
+export type SearchField =
+  'text' | 'from' | 'to' | 'subject' | 'after' | 'before' | 'hasAttachment' | 'unread' | 'starred'
 export interface MailQuery {
   view: View
   accountId?: string
@@ -184,6 +187,10 @@ export interface MailQuery {
   before?: string
   hasAttachment?: boolean
   unread?: boolean
+  /** The search exactly as typed. Gmail answers it with its own search, operators and all. */
+  search?: string
+  /** The fields above that the typed search set, so Gmail is not asked for them twice. */
+  searchFields?: SearchField[]
   /** Only mail matching at least one of these, as in a split inbox tab. */
   matchAny?: SplitCondition[]
   /** Never mail matching any of these, as in the inbox tab that other splits leave behind. */

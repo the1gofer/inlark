@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gmailSearch, parseSearch } from '../packages/core/src'
+import { gmailSearch, parseSearch, withoutTyped } from '../packages/core/src'
 
 const now = new Date('2026-10-25T12:00:00Z')
 
@@ -44,5 +44,34 @@ describe('search operators', () => {
         text: 'lunch',
       }),
     ).toBe('from:"Karla Smith" has:attachment is:starred after:2026/01/04 lunch')
+  })
+  it('sends the typed search to Gmail as written', () => {
+    const search = '"facility advisors" OR from:karla label:board is:unread'
+    const typed = parseSearch(search, now).search
+    expect(
+      gmailSearch({ view: 'all', ...typed, search, searchFields: ['text', 'from', 'unread'] }),
+    ).toBe(search)
+  })
+  it('adds only the filters the search box did not set, grouping the typed search', () => {
+    expect(
+      gmailSearch({
+        view: 'all',
+        text: 'lunch OR dinner',
+        hasAttachment: true,
+        search: 'lunch OR dinner',
+        searchFields: ['text'],
+      }),
+    ).toBe('(lunch OR dinner) has:attachment')
+  })
+  it('leaves filters set some other way for the index to check', () => {
+    expect(
+      withoutTyped({
+        view: 'starred',
+        unread: true,
+        after: '2026-01-05T00:00:00.000Z',
+        search: 'is:starred is:unread',
+        searchFields: ['unread', 'starred'],
+      }),
+    ).toEqual({ view: 'all', after: '2026-01-05T00:00:00.000Z' })
   })
 })
