@@ -211,6 +211,7 @@ export class MailService {
   private undos = new Map<string, UndoEntry[]>()
   private writes = new Map<string, Promise<unknown>>()
   private busyDrafts = new Set<string>()
+  private startingSends = new Set<string>()
   private refreshing = new Set<string>()
   private filing = new Set<string>()
   private unreadCounts = new Map<string, number>()
@@ -1252,6 +1253,9 @@ export class MailService {
   syncDraft = async (input: Draft): Promise<Draft> => {
     if (this.protectionTransition) throw new Error('The vault is locking.')
     if (this.busyDrafts.has(input.id)) return this.localDrafts.get(input.id) || input
+    // A message waiting to go out is sent from this device; uploading it again only delays the send.
+    if (this.localDrafts.get(input.id)?.sendAt || this.startingSends.has(input.id))
+      return this.localDrafts.get(input.id) || input
     input = await this.saveDraft(input)
     this.busyDrafts.add(input.id)
     let committed: Draft | undefined
@@ -1549,7 +1553,14 @@ export class MailService {
   }
   scheduleSend = async (input: Draft, sendAt: string): Promise<Draft> => {
     if (Number.isNaN(Date.parse(sendAt))) throw new Error('Choose a valid time to send.')
-    const draft = sendDraftSchema.parse(await this.saveDraft(sendDraftSchema.parse(input)))
+    this.startingSends.add(input.id)
+    let draft: Draft
+    try {
+      await this.draftSaved(input.id)
+      draft = sendDraftSchema.parse(await this.saveDraft(sendDraftSchema.parse(input)))
+    } finally {
+      this.startingSends.delete(input.id)
+    }
     if (draft.status === 'sending' || draft.status === 'sent' || draft.status === 'uncertain')
       throw new Error('This message has already been sent or is sending.')
     const scheduled = { ...draft, sendAt: new Date(sendAt).toISOString() }
@@ -1574,10 +1585,20 @@ export class MailService {
     this.emit({ type: 'changed', accountId: draft.accountId })
     return editable
   }
+  /**
+   * Waits for a server save of this draft that is already running. Sending used to give up
+   * here, which left the message in Drafts whenever a slow save overlapped the send.
+   */
+  private async draftSaved(id: string) {
+    for (const started = Date.now(); this.busyDrafts.has(id);) {
+      if (Date.now() - started > 10 * 60_000)
+        throw new Error('This draft is still saving. Try again in a moment.')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+  }
   /** Wakes for the next scheduled send. Long waits are re-checked so clock changes are noticed. */
   private armSendTimer() {
     clearTimeout(this.sendTimer)
-    clearTimeout(this.reminderTimer)
     if (this.disposed) return
     const times = [...this.localDrafts.values()].flatMap((d) =>
       d.sendAt ? [Date.parse(d.sendAt)] : [],
@@ -1782,14 +1803,20 @@ export class MailService {
     let draft = sendDraftSchema.parse(input)
     if (!draft.to.length && !draft.cc.length && !draft.bcc.length)
       throw new Error('Add at least one recipient.')
-    if (this.busyDrafts.has(draft.id))
-      throw new Error('This draft is still saving. Try again in a moment.')
-    const existing = this.journals.get(draft.id)
-    if (existing && existing.state !== 'rejected') return this.reconcile(draft.id)
-    // Sending now replaces any schedule, so a failure can't be retried later behind the user's back.
-    draft = sendDraftSchema.parse({ ...(await this.saveDraft(draft)), sendAt: undefined })
-    const { provider, account } = this.provider(draft.accountId)
-    this.busyDrafts.add(draft.id)
+    // No background save may start for this draft between waiting for one and sending.
+    this.startingSends.add(draft.id)
+    let provider: MailProvider, account: Account
+    try {
+      await this.draftSaved(draft.id)
+      const existing = this.journals.get(draft.id)
+      if (existing && existing.state !== 'rejected') return this.reconcile(draft.id)
+      // Sending now replaces any schedule, so a failure can't be retried later behind the user's back.
+      draft = sendDraftSchema.parse({ ...(await this.saveDraft(draft)), sendAt: undefined })
+      ;({ provider, account } = this.provider(draft.accountId))
+      this.busyDrafts.add(draft.id)
+    } finally {
+      this.startingSends.delete(draft.id)
+    }
     const journal: Journal = {
       draftId: draft.id,
       accountId: draft.accountId,
@@ -2496,6 +2523,8 @@ export class MailService {
       .filter(
         (d) =>
           ['local', 'error'].includes(d.status) &&
+          !d.sendAt &&
+          !this.startingSends.has(d.id) &&
           d.identityId &&
           d.errorKind !== 'conflict' &&
           !d.error?.includes('another client') &&
@@ -2532,6 +2561,7 @@ export class MailService {
     void this.encryption.lock()
     if (this.timer) clearInterval(this.timer)
     clearTimeout(this.sendTimer)
+    clearTimeout(this.reminderTimer)
     if (this.indexingEmit) clearTimeout(this.indexingEmit)
     for (const provider of this.providers.values()) {
       provider.dispose()
