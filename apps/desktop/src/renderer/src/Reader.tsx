@@ -1163,6 +1163,15 @@ export function Reader({
                     </time>
                     {!draft && (
                       <IconButton
+                        label={'Reply to ' + (sender?.name || sender?.email || 'sender')}
+                        className="message-reply"
+                        onClick={() => onReply(message, 'reply')}
+                      >
+                        <Reply size={13} />
+                      </IconButton>
+                    )}
+                    {!draft && (
+                      <IconButton
                         label="Message details"
                         aria-expanded={details.has(message.id)}
                         onClick={() => toggle(message.id, setDetails)}
@@ -1274,6 +1283,22 @@ export function Reader({
                               </div>
                             )
                           })}
+                        </div>
+                      )}
+                      {!draft && message.id !== last?.id && (
+                        <div className="message-actions flex gap-1.5 flex-wrap mt-4 [&_.button]:text-[11px]">
+                          <Button variant="ghost" onClick={() => onReply(message, 'reply')}>
+                            <Reply size={14} />
+                            Reply
+                          </Button>
+                          <Button variant="ghost" onClick={() => onReply(message, 'replyAll')}>
+                            <ReplyAll size={14} />
+                            Reply all
+                          </Button>
+                          <Button variant="ghost" onClick={() => onReply(message, 'forward')}>
+                            <Forward size={14} />
+                            Forward
+                          </Button>
                         </div>
                       )}
                       {draft && (
