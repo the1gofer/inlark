@@ -539,6 +539,57 @@ describe('scheduled sending', () => {
     await service.init()
     expect((await service.drafts())[0].sendAt).toBe(at)
   })
+  it('sends a scheduled message even while a slow draft upload is still running', async () => {
+    const submit = vi
+      .spyOn(JmapProvider.prototype, 'submit')
+      .mockResolvedValue({ accepted: ['recipient@example.com'], rejected: [] })
+    vi.mocked(JmapProvider.prototype.messages).mockResolvedValue([
+      { ...mail, id: 'created', keywords: { $draft: true, $seen: true } },
+    ])
+    let finishUpload!: () => void
+    vi.mocked(JmapProvider.prototype.createDraft).mockImplementationOnce(
+      () => new Promise((resolve) => (finishUpload = () => resolve('created'))),
+    )
+    const upload = service.syncDraft(draft)
+    await vi.waitFor(() => expect(finishUpload).toBeTypeOf('function'))
+    const edited = { ...draft, text: 'Final words', updatedAt: '2026-09-23T10:05:00.000Z' }
+    const scheduling = service.scheduleSend(edited, soon(50))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(submit).not.toHaveBeenCalled()
+    finishUpload()
+    await upload
+    expect((await scheduling).text).toBe('Final words')
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1), { timeout: 2000 })
+    // The upload and the message itself; nothing in between while it waited to go out.
+    const created = vi.mocked(JmapProvider.prototype.createDraft).mock.calls
+    expect(created).toHaveLength(2)
+    expect(created[1][1].text).toBe('Final words')
+  })
+  it('waits for a draft upload that overlaps a due send instead of giving up', async () => {
+    const submit = vi
+      .spyOn(JmapProvider.prototype, 'submit')
+      .mockResolvedValue({ accepted: ['recipient@example.com'], rejected: [] })
+    await service.scheduleSend(draft, soon(100))
+    vi.mocked(JmapProvider.prototype.messages).mockResolvedValue([
+      { ...mail, id: 'created', keywords: { $draft: true, $seen: true } },
+    ])
+    let finishUpload!: () => void
+    vi.mocked(JmapProvider.prototype.createDraft).mockImplementationOnce(
+      () => new Promise((resolve) => (finishUpload = () => resolve('created'))),
+    )
+    // A background upload is never started for a scheduled message.
+    expect((await service.syncDraft(draft)).sendAt).toBeTruthy()
+    await service.cancelScheduledSend(draft.id)
+    const upload = service.syncDraft({ ...draft, updatedAt: new Date().toISOString() })
+    await vi.waitFor(() => expect(finishUpload).toBeTypeOf('function'))
+    const sending = service.send({ ...draft, updatedAt: new Date().toISOString() })
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(submit).not.toHaveBeenCalled()
+    finishUpload()
+    await upload
+    expect((await sending).status).toBe('sent')
+    expect(submit).toHaveBeenCalledTimes(1)
+  })
   it('reports a scheduled send that fails and keeps the draft', async () => {
     const events: unknown[] = []
     service.dispose()

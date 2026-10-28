@@ -174,6 +174,7 @@ export function Composer({
     [toVersion, setToVersion] = useState(0)
   const latest = useRef(draft),
     sync = useRef<Promise<unknown>>(Promise.resolve()),
+    syncGeneration = useRef(0),
     persisted = useRef(!!initial.serverId || initial.status !== 'local'),
     alive = useRef(true),
     mentionKeys = useRef<(event: KeyboardEvent) => boolean>(() => false)
@@ -380,19 +381,24 @@ export function Composer({
         })
     }, 350)
     const serverTimer = setTimeout(() => {
-      const captured = latest.current
-      if (!captured.identityId || account.status !== 'connected') return
+      if (!latest.current.identityId || account.status !== 'connected') return
+      // Only the newest edit is uploaded. Pauses while typing used to queue one upload each,
+      // and a send had to wait for all of them behind a busy server.
+      const generation = ++syncGeneration.current
+      let captured = latest.current
       sync.current = sync.current
-        .then(() =>
-          api.syncDraft({
+        .then(() => {
+          if (generation !== syncGeneration.current) return
+          captured = latest.current
+          return api.syncDraft({
             ...captured,
             serverId: latest.current.serverId,
             serverFingerprint: latest.current.serverFingerprint,
-          }),
-        )
+          })
+        })
         .then((saved) => {
-          const result = saved as Draft
-          if (!alive.current) return
+          const result = saved as Draft | undefined
+          if (!result || !alive.current) return
           const current = latest.current
           const merged = {
             ...current,
@@ -490,8 +496,10 @@ export function Composer({
     if ((later || delay > 0) && latest.current.status !== 'uncertain') {
       setSending(true)
       setSendError(undefined)
+      // Uploads not yet started are dropped. The server finishes one already running before it
+      // takes the message, so the send is recorded even if this tab closes meanwhile.
+      syncGeneration.current++
       try {
-        await sync.current
         await localSaveDraft(latest.current)
         const scheduled = await api.scheduleSend(
           latest.current,
@@ -511,8 +519,8 @@ export function Composer({
     }
     setSending(true)
     setSendError(undefined)
+    syncGeneration.current++
     try {
-      await sync.current
       await localSaveDraft(latest.current)
       const result =
         latest.current.status === 'uncertain'
