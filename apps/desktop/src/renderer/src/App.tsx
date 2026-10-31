@@ -2754,6 +2754,12 @@ export function App() {
                     { accountId: conversation.accountId, threadId: conversation.id },
                   ])
                 }
+                onSnooze={(conversation) =>
+                  setRemindFor({
+                    kind: 'snooze',
+                    targets: [{ accountId: conversation.accountId, threadId: conversation.id }],
+                  })
+                }
               />
             )}
             {phone && !selected.size && !draftSelected.size && (
