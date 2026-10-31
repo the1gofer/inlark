@@ -1,7 +1,13 @@
 // Gives the interface the same `window.mail` API the desktop preload provides, backed by the
 // inlark server over a WebSocket instead of Electron IPC.
 import type { AppEvent, DesktopMailAPI } from '@inlark/core'
-import { decode, encode, type ClientMessage, type ServerMessage } from '../server/protocol'
+import {
+  decode,
+  encode,
+  viewableType,
+  type ClientMessage,
+  type ServerMessage,
+} from '../server/protocol'
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void }
 const listeners = new Set<(event: AppEvent) => void>()
@@ -233,6 +239,26 @@ const overrides: Partial<DesktopMailAPI> = {
       throw new Error('This link type is not supported.')
     if (url.protocol === 'mailto:') dispatch({ type: 'mailto', url: value })
     else openLink(url.toString())
+  },
+  // Download from the click itself: a download started later, when a server reply arrives, can
+  // be dropped by the browser, and a plain request shows the browser's own progress.
+  async attachment(accountId, attachment, open) {
+    const view = open && !!viewableType(attachment.type, attachment.name)
+    const query = new URLSearchParams({
+      account: accountId,
+      blob: attachment.blobId,
+      name: attachment.name,
+      type: attachment.type,
+    })
+    if (view) query.set('open', '1')
+    const url = '/attachment?' + query.toString()
+    if (view && window.open(url, '_blank')) return
+    const link = document.createElement('a')
+    link.href = url
+    link.download = attachment.name
+    document.body.append(link)
+    link.click()
+    link.remove()
   },
   stageAttachments: (protectedDraft?: boolean) =>
     withFiles('stageAttachments', [protectedDraft], true, []) as never,

@@ -21,6 +21,10 @@ import type {
   SelectedMailbox,
 } from './port'
 
+// ImapFlow fetches 64 KB per round trip by default, so a 5 MB attachment took 80 sequential
+// requests (about 25 s on Gmail). Ask for whole parts at once instead.
+const wholeChunk = 8 * 1024 * 1024
+
 const tlsCodes = new Set(['ERR_SSL_WRONG_VERSION_NUMBER', 'EPROTO'])
 
 /** Maps a connection-phase failure to a calm, specific error. Never includes the password. */
@@ -301,6 +305,7 @@ export class ImapFlowPort implements ImapPort {
       const { content } = await this.client.download(String(uid), undefined, {
         uid: true,
         maxBytes: maxBytes + 1,
+        chunkSize: wholeChunk,
       })
       return bytes(content, maxBytes, false)
     })
@@ -310,7 +315,7 @@ export class ImapFlowPort implements ImapPort {
       const { content } = await this.client.download(String(uid), part, {
         uid: true,
         maxBytes: maxBytes + 1,
-        ...(truncate ? { chunkSize: Math.min(65536, Math.max(1024, maxBytes)) } : {}),
+        chunkSize: truncate ? Math.min(65536, Math.max(1024, maxBytes)) : wholeChunk,
       })
       return bytes(content, maxBytes, truncate)
     })
