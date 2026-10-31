@@ -60,7 +60,7 @@ import { AccountMark } from './AccountMark'
 import { HintIconButton } from './HintIconButton'
 import { actionLimit } from './account-limits'
 import { ShortcutHint, useShortcutText } from './shortcuts'
-import { emailBodyHtml, emailSanitizeOptions } from './email-html'
+import { emailBodyHtml, emailSanitizeOptions, openWebLinksInNewTab } from './email-html'
 import { offersAction } from './view-actions'
 import { SecuritySummary, WithheldBody, withheld } from './MessageSecurity'
 
@@ -293,6 +293,7 @@ export function EmailBody({
         (message.text?.trim() || message.preview?.trim())
       )
         template.innerHTML = DOMPurify.sanitize(plain)
+      openWebLinksInNewTab(template.content)
       const imageJobs = [...template.content.querySelectorAll('img')].map(async (image) => {
         const original = image.getAttribute('src') || ''
         image.removeAttribute('src')
@@ -461,6 +462,10 @@ export function EmailBody({
         doc.addEventListener('click', (event) => {
           const link = (event.target as Element).closest('a')
           if (link) {
+            // Web links open as real links (see openWebLinksInNewTab), which phone browsers
+            // allow; the desktop app routes the new window to the system browser.
+            if (link.target === '_blank' && /^https?:/i.test(link.getAttribute('href') || ''))
+              return
             event.preventDefault()
             const href = link.getAttribute('href')
             if (!href || href.startsWith('#')) return
@@ -571,7 +576,8 @@ export function EmailBody({
         <iframe
           ref={frame}
           title={'Message from ' + (message.from[0]?.name || message.from[0]?.email || 'sender')}
-          sandbox="allow-same-origin"
+          // Popups only from the reader's own links, which stay without scripts.
+          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
           className={cn(
             'email-frame [color-scheme:light] w-full border-0 block min-h-10',
             adaptive
