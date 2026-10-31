@@ -41,3 +41,38 @@ export const emailSanitizeOptions: Config = {
   ],
   FORBID_ATTR: ['srcset', 'action', 'formaction', 'ping', 'autofocus', 'contenteditable'],
 }
+
+/** The web address a link in mail points to, or undefined when it is not a web link. */
+export function webLinkTarget(href: string): string | undefined {
+  const value = href.trim()
+  const candidate = value.startsWith('//')
+    ? 'https:' + value
+    : /^www\./i.test(value)
+      ? 'https://' + value
+      : value
+  try {
+    const url = new URL(candidate)
+    if ((url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password)
+      return url.toString()
+  } catch {
+    /* Not an absolute address. */
+  }
+  return undefined
+}
+
+/**
+ * Web links open in a new tab as ordinary links. Phone browsers, Safari on iPhone above all,
+ * block a tab opened by script from a tap inside the message frame, but never a real link.
+ */
+export function openWebLinksInNewTab(root: ParentNode) {
+  for (const link of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    const target = webLinkTarget(link.getAttribute('href') || '')
+    if (!target) {
+      link.removeAttribute('target')
+      continue
+    }
+    link.setAttribute('href', target)
+    link.setAttribute('target', '_blank')
+    link.setAttribute('rel', 'noopener noreferrer')
+  }
+}
