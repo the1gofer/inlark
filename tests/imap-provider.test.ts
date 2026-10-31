@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ProviderError, type Account, type ImapConnectionConfig } from '../packages/core/src'
+import {
+  ProviderError,
+  parseSearch,
+  type Account,
+  type ImapConnectionConfig,
+} from '../packages/core/src'
 import { ImapProvider, limitsFor, imapFlowOptions, ImapFlowPort } from '../packages/imap/src'
 import { openInProcessIndex } from '../apps/desktop/src/main/imap-index/sqlite-index'
 import { FakeImapServer } from './support/fake-imap'
@@ -591,6 +596,31 @@ describe('IMAP indexing and reading', () => {
     expect(server.searches).toEqual([
       { path: '[Gmail]/All Mail', criteria: { gmailRaw: 'from:karla tacos' } },
     ])
+  })
+  it('lets Gmail answer a typed search, operators included, without re-checking them', async () => {
+    server.capabilities.add('X-GM-EXT-1')
+    server.addMailbox('[Gmail]/All Mail', '\\All')
+    server.deliver('[Gmail]/All Mail', {
+      emailId: '7',
+      messageId: 'k@x',
+      from: [{ name: 'Karla', email: 'karla@example.org' }],
+      subject: 'Lunch',
+      date: at(1),
+      flags: ['\\Seen'],
+    })
+    const p = await connected()
+    await sync(p)
+    server.searches = []
+    const search = 'from:karla is:unread label:board'
+    const found = await p.query(account, {
+      view: 'all',
+      ...parseSearch(search).search,
+      search,
+      searchFields: ['from', 'unread', 'text'],
+    })
+    // The fake ignores is:unread, so a match shows the index did not filter it out again.
+    expect(found.items.map((c) => c.subject)).toEqual(['Lunch'])
+    expect(server.searches).toEqual([{ path: '[Gmail]/All Mail', criteria: { gmailRaw: search } }])
   })
   it('picks up new Inbox mail announced on the IDLE connection', async () => {
     const p = await connected({

@@ -133,6 +133,23 @@ export const querySchema = z.object({
   before: z.string().max(40).optional(),
   hasAttachment: z.boolean().optional(),
   unread: z.boolean().optional(),
+  search: z.string().max(2000).optional(),
+  searchFields: z
+    .array(
+      z.enum([
+        'text',
+        'from',
+        'to',
+        'subject',
+        'after',
+        'before',
+        'hasAttachment',
+        'unread',
+        'starred',
+      ]),
+    )
+    .max(9)
+    .optional(),
   matchAny: z.array(splitConditionSchema).max(50).optional(),
   excludeAny: z.array(splitConditionSchema).max(1000).optional(),
 })

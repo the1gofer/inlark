@@ -25,6 +25,7 @@ import {
   type SubmissionOutcome,
   conditionsFor,
   gmailSearch,
+  withoutTyped,
 } from '@inlark/core'
 import {
   attachmentsOf,
@@ -798,18 +799,21 @@ export class ImapProvider implements MailProvider {
     // A split meant only for other accounts has nothing here.
     if (matchAny && !matchAny.length) return { items: [], total: 0 }
     const excludeAny = conditionsFor(query.excludeAny, account.id)
+    // On Gmail a typed search is Gmail's to answer, so its operators are not checked again here.
+    const gmailTyped = this.gmail && !!query.search?.trim()
+    const local = gmailTyped ? withoutTyped(query) : query
     const filter: ConversationFilter = {
       ...scope.filter,
-      ...(query.view === 'starred' ? { flagged: true } : {}),
-      ...(query.unread ? { unseen: true } : {}),
-      ...(query.hasAttachment ? { hasAttachment: true } : {}),
-      ...(query.after ? { after: query.after } : {}),
-      ...(query.before ? { before: query.before } : {}),
+      ...(local.view === 'starred' ? { flagged: true } : {}),
+      ...(local.unread ? { unseen: true } : {}),
+      ...(local.hasAttachment ? { hasAttachment: true } : {}),
+      ...(local.after ? { after: local.after } : {}),
+      ...(local.before ? { before: local.before } : {}),
       ...(matchAny ? { matchAny } : {}),
       ...(excludeAny?.length ? { excludeAny } : {}),
     }
     let incomplete = scope.boxes.some((b) => !b.complete)
-    if (query.text || query.from || query.to || query.subject) {
+    if (gmailTyped || query.text || query.from || query.to || query.subject) {
       const found = await this.search(query, scope.boxes)
       filter.ids = found.ids
       incomplete = found.incomplete
