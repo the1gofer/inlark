@@ -34,11 +34,17 @@ export function swipeResult(
 export function useSwipe({
   onLeft,
   onRight,
+  away,
 }: {
-  /** Swiping toward the left edge. The row springs back, since the action may be canceled. */
+  /** Swiping toward the left edge. */
   onLeft?: () => void
-  /** Swiping toward the right edge. The row slides away before the action runs. */
+  /** Swiping toward the right edge. */
   onRight?: () => void
+  /**
+   * The side whose action removes the row, which slides off screen before it runs. The other
+   * side springs back, since its action may still be canceled (a snooze picker, for example).
+   */
+  away?: SwipeSide
 }) {
   const slider = useRef<HTMLDivElement>(null)
   const start = useRef<{ x: number; y: number; axis?: 'x' | 'y'; dx: number } | undefined>(
@@ -111,14 +117,15 @@ export function useSwipe({
         if (!s || s.axis !== 'x') return
         const width = slider.current?.offsetWidth || window.innerWidth
         const result = swipeResult(s.dx, width, canLeft, canRight)
-        if (result === 'right') {
-          place(width, true)
-          window.setTimeout(() => onRight?.(), 160)
+        const run = result === 'left' ? onLeft : result === 'right' ? onRight : undefined
+        if (result && result === away) {
+          place(result === 'left' ? -width : width, true)
+          window.setTimeout(() => run?.(), 160)
           // The list drops the row once the action starts. If it is still here, put it back.
           reset.current = window.setTimeout(settle, 1200)
         } else {
           settle()
-          if (result === 'left') onLeft?.()
+          run?.()
         }
       },
       onTouchCancel: () => {

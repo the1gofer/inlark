@@ -60,8 +60,8 @@ export function ConversationRow({
   // An unsent reply is flagged rather than counted, so it never reads as sent.
   const drafts = c.messages.filter(isDraft).length
   const count = c.count - drafts
-  // Swipe right to archive and left to snooze, like Superhuman. Only touch input swipes.
-  const swipe = useSwipe({ onRight: onArchive, onLeft: onSnooze })
+  // Swipe right to left to archive and left to right to snooze. Only touch input swipes.
+  const swipe = useSwipe({ onLeft: onArchive, onRight: onSnooze, away: 'left' })
   return (
     <div className="swipe-row relative overflow-hidden">
       {swipe.side && (
@@ -70,20 +70,20 @@ export function ConversationRow({
           className={cn(
             'swipe-action absolute inset-0 flex items-center gap-2 px-6 text-white text-[13px] font-semibold',
             'transition-colors duration-150',
-            swipe.side === 'right'
-              ? 'justify-start ' + (swipe.armed ? 'bg-[#1f8f4e]' : 'bg-[#7a8a80]')
-              : 'justify-end ' + (swipe.armed ? 'bg-[#c27803]' : 'bg-[#8a8170]'),
+            swipe.side === 'left'
+              ? 'justify-end ' + (swipe.armed ? 'bg-[#1f8f4e]' : 'bg-[#7a8a80]')
+              : 'justify-start ' + (swipe.armed ? 'bg-[#c27803]' : 'bg-[#8a8170]'),
           )}
         >
-          {swipe.side === 'right' ? (
+          {swipe.side === 'left' ? (
             <>
-              <Archive size={18} />
               Archive
+              <Archive size={18} />
             </>
           ) : (
             <>
-              Snooze
               <Clock size={18} />
+              Snooze
             </>
           )}
         </div>
