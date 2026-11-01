@@ -630,24 +630,29 @@ export function App() {
           ? await api.mutateAll(query, action)
           : await api.mutate({ targets: chosen, action, mailboxId })
       const count = allMatching && !explicit ? result.changed : chosen.length
+      // A move the server didn't make must not read as done, or the conversation silently
+      // stays where it was (in Gmail's inbox, for example) while the list hides it.
+      const unmoved = leaves && !result.changed && !result.failures.length
       setToast({
-        tone: result.failures.length ? 'error' : undefined,
+        tone: result.failures.length || unmoved ? 'error' : undefined,
         text: result.failures.length
           ? result.changed + ' updated · ' + result.failures[0]
-          : (count > 1 ? count.toLocaleString() + ' conversations · ' : '') +
-            {
-              archive: 'Archived',
-              trash: 'Moved to trash',
-              spam: 'Marked as spam',
-              read: 'Marked as read',
-              unread: 'Marked as unread',
-              star: 'Starred',
-              unstar: 'Star removed',
-              move: 'Moved',
-              restore: 'Restored to inbox',
-              notSpam: 'Moved to inbox',
-              destroy: 'Permanently deleted',
-            }[action],
+          : unmoved
+            ? 'Nothing was moved on the server. Refresh and try again.'
+            : (count > 1 ? count.toLocaleString() + ' conversations · ' : '') +
+              {
+                archive: 'Archived',
+                trash: 'Moved to trash',
+                spam: 'Marked as spam',
+                read: 'Marked as read',
+                unread: 'Marked as unread',
+                star: 'Starred',
+                unstar: 'Star removed',
+                move: 'Moved',
+                restore: 'Restored to inbox',
+                notSpam: 'Moved to inbox',
+                destroy: 'Permanently deleted',
+              }[action],
         undoId: result.undoId,
       })
       setSelected(new Set())
