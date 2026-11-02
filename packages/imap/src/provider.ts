@@ -112,6 +112,8 @@ type Task = {
 }
 const slowTaskMs = 3000
 const searchCap = 1000
+/** Gmail's All Mail, which holds every message whatever its labels. */
+const isAllMail = (box: IndexedMailbox) => box.specialUse === '\\All'
 const roleViews = ['inbox', 'archive', 'sent', 'drafts', 'junk', 'trash']
 const bodyLimit = 10_000_000
 /** Above this, a message is read part by part, so its attachments are not downloaded to show it. */
@@ -1246,6 +1248,12 @@ export class ImapProvider implements MailProvider {
     }
     for (const { source, target, items } of groups.values())
       await this.run(async (port) => {
+        // On Gmail, folders are labels and All Mail holds every message. Archiving means taking
+        // the Inbox label off, and leaving All Mail means adding a label, never deleting.
+        if (this.gmail && (isAllMail(source) || isAllMail(target))) {
+          await this.gmailRelabel(port, source, target, items, updated, failures)
+          return
+        }
         const selected = await port.select(source.path)
         const valid = items.filter((m) => m.uidValidity === selected.uidValidity)
         for (const m of items.filter((m) => !valid.includes(m)))
@@ -1305,6 +1313,62 @@ export class ImapProvider implements MailProvider {
     }
     if (moves.length || destroy.length) this.requestSync('all')
     return { updated, failures }
+  }
+  /**
+   * Gmail moves to or from All Mail. A UID MOVE into All Mail can be accepted without the
+   * message leaving the Inbox, and a MOVE out of All Mail would expunge it from All Mail,
+   * which Gmail may treat as deleting it. So archiving removes the message from its label
+   * folder only (Gmail keeps it in All Mail), and restoring copies it into the label folder.
+   */
+  private async gmailRelabel(
+    port: ImapPort,
+    source: IndexedMailbox,
+    target: IndexedMailbox,
+    items: IndexedMessage[],
+    updated: string[],
+    failures: string[],
+  ) {
+    const selected = await port.select(source.path)
+    const valid = items.filter((m) => m.uidValidity === selected.uidValidity)
+    for (const m of items.filter((m) => !valid.includes(m)))
+      failures.push(m.id + ': changed on the server')
+    if (!valid.length) return
+    const uids = valid.map((m) => m.uid)
+    if (isAllMail(target)) {
+      if (!(await port.expunge(uids))) {
+        failures.push(...valid.map((m) => m.id + ': the server refused the archive'))
+        return
+      }
+      const related = await this.index.threadMessages(this.accountId, [
+        ...new Set(valid.map((m) => m.threadId)),
+      ])
+      for (const m of valid) {
+        // Keep the message's ID on its All Mail copy, so undo and selection still work.
+        const copy =
+          related.find(
+            (r) => r.mailboxId === target.id && !!m.emailId && r.emailId === m.emailId,
+          ) ||
+          (m.messageId
+            ? (await this.index.findByMessageId(this.accountId, m.messageId, target.id))[0]
+            : undefined)
+        if (copy?.uidValidity)
+          await this.index.relocate(this.accountId, m.id, {
+            mailboxId: target.id,
+            uidValidity: copy.uidValidity,
+            uid: copy.uid,
+          })
+        else await this.index.removeMessages(this.accountId, [m.id])
+        updated.push(m.id)
+      }
+      return
+    }
+    // Out of All Mail: add the label by copying; the All Mail copy stays where it is.
+    const result = await port.copy(uids, target.path)
+    if (!result) {
+      failures.push(...valid.map((m) => m.id + ': the server refused the move'))
+      return
+    }
+    updated.push(...valid.map((m) => m.id))
   }
   /**
    * UIDs in the selected folder whose Message-ID matches. Server search indexes can lag behind
