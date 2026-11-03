@@ -214,6 +214,8 @@ export const draftSchema = z.object({
     .enum(['conflict', 'connection', 'outgoingAuthentication', 'certificate', 'rejected'])
     .optional(),
   sendAt: z.string().datetime().optional(),
+  /** Adds an open-tracking pixel when sent. Missing means the tracking default. */
+  track: z.boolean().optional(),
 })
 export const sendDraftSchema = draftSchema
   .refine(
@@ -252,6 +254,13 @@ export const settingsSchema = z.object({
     .max(500)
     .optional(),
   splits: z.array(splitSchema).max(20).optional(),
+  tracking: z
+    .object({
+      url: z.string().trim().max(2048),
+      secret: z.string().trim().max(512),
+      byDefault: z.boolean(),
+    })
+    .optional(),
 })
 export const ipcSchemas = {
   encryptionStatus: z.tuple([]),
@@ -341,6 +350,9 @@ export const ipcSchemas = {
     }),
   ]),
   cancelReminder: z.tuple([z.string().uuid()]),
+  tracking: z.tuple([]),
+  checkTracking: z.tuple([]),
+  forgetTracked: z.tuple([z.string().max(64)]),
   reconcile: z.tuple([z.string().uuid()]),
   submissions: z.tuple([]),
   retrySentCopy: z.tuple([z.string().uuid()]),

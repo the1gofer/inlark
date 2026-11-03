@@ -23,6 +23,7 @@ import {
   Copy as CopyGlyph,
   CornerDownLeft as CornerDownLeftGlyph,
   Download as DownloadGlyph,
+  Eye as EyeGlyph,
   ExternalLink as ExternalLinkGlyph,
   File as FileGlyph,
   FileArchive as FileArchiveGlyph,
@@ -124,6 +125,7 @@ export const ChevronUp = icon(ChevronUpGlyph)
 export const Copy = icon(CopyGlyph)
 export const CornerDownLeft = icon(CornerDownLeftGlyph)
 export const Download = icon(DownloadGlyph)
+export const Eye = icon(EyeGlyph)
 export const ExternalLink = icon(ExternalLinkGlyph)
 export const File = icon(FileGlyph)
 export const FileArchive = icon(FileArchiveGlyph)

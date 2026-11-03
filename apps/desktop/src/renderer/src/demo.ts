@@ -28,6 +28,7 @@ import {
   type ServerSettings,
   type SubmissionSummary,
   type Reminder,
+  type TrackingState,
   type Settings,
   matchesSplitQuery,
 } from '@inlark/core'
@@ -235,6 +236,11 @@ const demoSchedules = new Map<string, ReturnType<typeof setTimeout>>()
 let demoReminders: Reminder[] = []
 let settings = {
   ...defaultSettings,
+  tracking: {
+    url: 'https://inlark-tracker.example.workers.dev',
+    secret: 'demo-secret-demo-secret-demo-secret',
+    byDefault: true,
+  },
   splits: [
     {
       id: 'demo-team',
@@ -659,6 +665,84 @@ const unfileDraft = (draft: Draft | undefined) => {
     replyThreadId: original.threadId,
   })
   drafts.set(draft.id, draft)
+}
+/* ——— Open tracking: sample opens, including the kinds that aren't a person reading ——— */
+const iPhoneMail =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+let demoTracking: TrackingState = {
+  checkedAt: minutesAgo(1),
+  messages: [
+    {
+      token: 'demo-proposal',
+      accountId: demoAccounts[0].id,
+      messageId: 'message-0@demo.example',
+      subject: 'Signed proposal and next steps',
+      to: [{ name: 'Maya Chen', email: 'maya@example.com' }],
+      cc: [],
+      sentAt: minutesAgo(190),
+      opens: [
+        {
+          hit: 1,
+          at: minutesAgo(189.9),
+          ip: '40.94.31.12',
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          network: 'Microsoft Corporation',
+          country: 'US',
+          kind: 'early',
+        },
+        {
+          hit: 2,
+          at: minutesAgo(140),
+          ip: '73.162.88.41',
+          userAgent: iPhoneMail,
+          city: 'Portland',
+          country: 'US',
+          network: 'Comcast Cable Communications',
+          kind: 'reader',
+        },
+        {
+          hit: 3,
+          at: minutesAgo(12),
+          ip: '66.249.84.7',
+          userAgent:
+            'Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)',
+          country: 'US',
+          network: 'Google LLC',
+          kind: 'gmail',
+        },
+      ],
+    },
+    {
+      token: 'demo-invoice',
+      accountId: demoAccounts[0].id,
+      messageId: 'sent-invoice@demo.example',
+      subject: 'Invoice #1042',
+      to: [{ name: 'Ravi Patel', email: 'ravi@example.com' }],
+      cc: [],
+      sentAt: minutesAgo(60 * 26),
+      opens: [
+        {
+          hit: 4,
+          at: minutesAgo(60 * 26 - 3),
+          ip: '17.58.101.4',
+          userAgent: 'Mozilla/5.0',
+          network: 'Apple Inc.',
+          country: 'US',
+          kind: 'apple',
+        },
+      ],
+    },
+    {
+      token: 'demo-lease',
+      accountId: demoAccounts[0].id,
+      messageId: 'sent-lease@demo.example',
+      subject: 'Lease renewal notice',
+      to: [{ name: 'Dana Ruiz', email: 'dana@example.com' }],
+      cc: [],
+      sentAt: minutesAgo(60 * 50),
+      opens: [],
+    },
+  ],
 }
 /* ——— Encryption: sample keys and states only; nothing is encrypted in the browser ——— */
 const sampleFingerprint = (seed: string) => {
@@ -1345,6 +1429,19 @@ export const demoAPI: DesktopMailAPI = {
     drafts.set(id, editable)
     changed()
     return editable
+  },
+  tracking: async () => demoTracking,
+  checkTracking: async () => {
+    await pause(500)
+    demoTracking = { ...demoTracking, checkedAt: new Date().toISOString() }
+    return demoTracking
+  },
+  forgetTracked: async (token) => {
+    demoTracking = {
+      ...demoTracking,
+      messages: demoTracking.messages.filter((m) => m.token !== token),
+    }
+    return demoTracking
   },
   reminders: async () => [...demoReminders],
   remind: async ({ accountId, threadId, kind, at }) => {

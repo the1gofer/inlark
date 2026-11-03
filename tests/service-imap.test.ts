@@ -673,3 +673,140 @@ describe('IMAP aliases', () => {
     expect((await service.drafts())[0]).toMatchObject({ status: 'error', identityId })
   })
 })
+
+describe('IMAP open tracking', () => {
+  const tracking = {
+    url: 'https://tracker.example.workers.dev/',
+    secret: 'a-test-secret-that-is-long-enough-123',
+    byDefault: true,
+  }
+  let events: any[]
+  let hits: any[]
+  let requests: string[]
+  beforeEach(async () => {
+    service.dispose()
+    events = []
+    hits = []
+    requests = []
+    store = new JsonStore(directory)
+    service = new MailService(store, (event) => events.push(event), {
+      providers: factory,
+      trackerFetch: async (url, init) => {
+        requests.push(url)
+        expect(init.headers.Authorization).toBe('Bearer ' + tracking.secret)
+        const after = Number(new URL(url).searchParams.get('after'))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ hits: hits.filter((h) => h.id > after), caller: '203.0.113.9' }),
+        }
+      },
+    })
+    await service.init()
+    await service.connect(input)
+    await service.setSettings({ ...(await service.bootstrap()).settings, tracking })
+  })
+  const sentMime = (call = 0) => Buffer.from(submit.mock.calls[call][2]).toString('utf8')
+
+  it('adds a signed pixel the tracker accepts, and records the message', async () => {
+    await service.send(draft)
+    const mime = sentMime()
+    // Quoted-printable may wrap the address; join soft line breaks first.
+    const body = mime.replace(/=\r?\n/g, '').replace(/=3D/g, '=')
+    const match = /https:\/\/tracker\.example\.workers\.dev\/p\/([\w-]+)\.([\w-]+)\.gif/.exec(body)
+    expect(match).toBeTruthy()
+    const worker = (await import('../tracker/worker.js')).default
+    const inserted: unknown[][] = []
+    const env = {
+      TRACKER_SECRET: tracking.secret,
+      DB: {
+        prepare: () => ({
+          bind: (...values: unknown[]) => ({ run: async () => inserted.push(values) }),
+        }),
+      },
+    }
+    const waits: Promise<unknown>[] = []
+    const response = await worker.fetch(new Request(match![0]), env, {
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    })
+    await Promise.all(waits)
+    expect(response.headers.get('Content-Type')).toBe('image/gif')
+    expect(inserted).toHaveLength(1)
+    expect(inserted[0][0]).toBe(match![1])
+    const state = await service.tracking()
+    expect(state.messages).toHaveLength(1)
+    expect(state.messages[0]).toMatchObject({ token: match![1], subject: 'Plans', opens: [] })
+    expect(mime).toContain('Message-ID: <' + state.messages[0].messageId + '>')
+  })
+  it('sends no pixel when the message turns tracking off', async () => {
+    await service.send({ ...draft, track: false })
+    expect(sentMime()).not.toContain('tracker.example')
+    expect((await service.tracking()).messages).toEqual([])
+  })
+  it('logs opens from the tracker and says when a message is first opened', async () => {
+    await service.send(draft)
+    const [message] = (await service.tracking()).messages
+    const later = (seconds: number) =>
+      new Date(Date.parse(message.sentAt) + seconds * 1000).toISOString()
+    hits = [
+      {
+        id: 7,
+        token: message.token,
+        at: later(2),
+        ip: '40.1.1.1',
+        ua: 'Scanner',
+        country: 'US',
+        city: '',
+        asn: 1,
+        org: 'Microsoft',
+      },
+      {
+        id: 8,
+        token: message.token,
+        at: later(600),
+        ip: '203.0.113.9',
+        ua: 'Mozilla/5.0 (Macintosh)',
+        country: 'US',
+        city: '',
+        asn: 1,
+        org: 'Home ISP',
+      },
+      {
+        id: 9,
+        token: message.token,
+        at: later(900),
+        ip: '66.249.84.7',
+        ua: 'Mozilla/5.0 (via ggpht.com GoogleImageProxy)',
+        country: 'US',
+        city: '',
+        asn: 15169,
+        org: 'Google LLC',
+      },
+      {
+        id: 10,
+        token: 'someone-elses-token',
+        at: later(950),
+        ip: '1.2.3.4',
+        ua: 'x',
+        country: '',
+        city: '',
+        asn: 0,
+        org: '',
+      },
+    ]
+    const state = await service.checkTracking()
+    expect(state.error).toBeUndefined()
+    expect(state.messages[0].opens.map((o) => o.kind)).toEqual(['early', 'self', 'gmail'])
+    expect(events.filter((e) => e.type === 'notice').map((e) => e.text)).toEqual([
+      '“Plans” was opened.',
+    ])
+    // The next check asks only for newer hits and adds nothing twice.
+    await service.checkTracking()
+    expect(requests.at(-1)).toBe('https://tracker.example.workers.dev/api/hits?after=10')
+    expect((await service.tracking()).messages[0].opens).toHaveLength(3)
+  })
+  it('never loads its own pixel when showing sent mail', async () => {
+    const value = await service.remoteImage('https://tracker.example.workers.dev/p/abc.def.gif')
+    expect(value).toBeNull()
+  })
+})

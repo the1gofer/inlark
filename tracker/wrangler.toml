@@ -1,0 +1,10 @@
+name = "inlark-tracker"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+# Created with `npx wrangler d1 create inlark-tracker`; paste the id it prints here.
+[[d1_databases]]
+binding = "DB"
+database_name = "inlark-tracker"
+database_id = "REPLACE_WITH_DATABASE_ID"

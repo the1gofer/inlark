@@ -22,6 +22,7 @@ import {
   Lock,
   Clock,
   Zap,
+  Eye,
 } from '@inlark/ui/icons'
 import { Modal, Button, IconButton, Select, Spinner } from '@inlark/ui'
 import {
@@ -1124,6 +1125,21 @@ export function Composer({
             >
               <Zap size={15} />
             </IconButton>
+            {!!settings.tracking?.url && !!settings.tracking.secret && protection !== 'encrypt' && (
+              <IconButton
+                label={
+                  (draft.track ?? settings.tracking.byDefault)
+                    ? 'Open tracking is on for this message'
+                    : 'Open tracking is off for this message'
+                }
+                aria-pressed={draft.track ?? settings.tracking.byDefault}
+                className="compose-track aria-pressed:text-success"
+                onClick={() => update({ track: !(draft.track ?? settings.tracking!.byDefault) })}
+                disabled={!canEdit}
+              >
+                <Eye size={15} />
+              </IconButton>
+            )}
             {(own || protection !== 'none') && (
               <ProtectionMenu
                 mode={protection}
