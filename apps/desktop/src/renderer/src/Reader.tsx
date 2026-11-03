@@ -1,4 +1,5 @@
 import { cn } from '@inlark/ui'
+import { OpenBadge, trackedFor, useTracking } from './Tracking'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import {
@@ -776,6 +777,7 @@ export function Reader({
   onRemind,
   onCancelReminder,
 }: ReaderProps) {
+  const tracking = useTracking(!!settings.tracking?.url)
   const keys = useShortcutText()
   // Unsent drafts sit below the conversation they would continue, never among what was said.
   const history = messages.filter((m) => !isDraft(m))
@@ -1162,6 +1164,11 @@ export function Reader({
                         aria-label="Encrypted"
                       />
                     )}
+                    {!draft &&
+                      (() => {
+                        const tracked = trackedFor(tracking, message)
+                        return tracked && <OpenBadge tracked={tracked} />
+                      })()}
                     <time dateTime={message.receivedAt} title={longDate(message.receivedAt)}>
                       {draft && 'Saved '}
                       {when.date}

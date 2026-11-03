@@ -41,15 +41,27 @@ import {
   type FolderMappings,
   type DiscoveryResult,
   type OutgoingMessage,
+  type SubmissionOutcome,
   type SendResult,
   type ServerSettings,
   type SubmissionSummary,
   type Message,
   type Reminder,
+  type TrackedMessage,
+  type TrackingState,
 } from '@inlark/core'
 import { JmapProvider } from '@inlark/jmap'
 import { publicFetch } from './public-fetch'
 import { remoteImageData } from './remote-image'
+import {
+  applyHits,
+  fetchHits,
+  injectPixel,
+  isTrackerUrl,
+  readyTracking,
+  trackingToken,
+  type FetchJson,
+} from './tracking'
 import { SenderAvatarResolver, rasterType } from './sender-avatar'
 import { planMutation, safeUndoUpdates, undoForUpdated, type UndoEntry } from './mail-mutations'
 import { JsonStore, encryptSecret, decryptSecret, secureStorageAvailable } from './storage'
@@ -165,6 +177,8 @@ export interface ServiceOptions {
   providers?: ProviderFactory
   discover?: (email: string) => Promise<DiscoveryResult>
   crypto?: () => CryptoTransport
+  /** Replaces the network request used to read the open tracker, for tests. */
+  trackerFetch?: FetchJson
 }
 /** Fingerprints shown to the user are computed here from the certificate itself, never taken on trust. */
 function verifiedCertificates(config: ConnectionConfig): ConnectionConfig {
@@ -225,6 +239,10 @@ export class MailService {
   private sendTimer?: ReturnType<typeof setTimeout>
   private reminderTimer?: ReturnType<typeof setTimeout>
   private reminderList: Reminder[] = []
+  private trackingState: TrackingState = { messages: [] }
+  private trackingCursor = 0
+  private trackingTimer?: ReturnType<typeof setInterval>
+  private trackingCheck?: Promise<TrackingState>
   private logs: { at: string; event: string; state?: string }[] = []
   private senderAvatars = new SenderAvatarResolver()
   readonly encryption: EncryptionService
@@ -303,6 +321,11 @@ export class MailService {
     this.armSendTimer()
     this.reminderList = await this.store.read<Reminder[]>('reminders', [])
     this.armReminderTimer()
+    const saved = await this.store.read<{ cursor?: number; state?: TrackingState }>('tracking', {})
+    this.trackingCursor = saved.cursor || 0
+    this.trackingState = { messages: [], ...saved.state }
+    this.trackingTimer = setInterval(() => void this.checkTracking().catch(() => {}), 120_000)
+    void this.checkTracking().catch(() => {})
   }
   encryptionStatus = () => this.encryption.status()
   private async sendingIdentity(accountId: string, identityId: string) {
@@ -1860,12 +1883,42 @@ export class MailService {
           ? await this.protectedMime(draft, journal.messageId!)
           : undefined
       uploaded = protectedMime ? draft : await this.uploadDraft(draft)
+      // Encrypted mail is never tracked: the pixel would sit outside the encryption.
+      const tracker = protectedMime ? undefined : this.trackerFor(uploaded)
+      const withPixel = (token: string) => ({
+        ...uploaded,
+        html: injectPixel(uploaded.html, this.settings.tracking!, token),
+      })
+      const everyone = [
+        ...new Map(
+          [...draft.to, ...draft.cc, ...draft.bcc].map((a) => [a.email.toLowerCase(), a]),
+        ).values(),
+      ]
+      // Each recipient of a group message gets a copy with their own pixel, so an open says
+      // who opened it. Only where inlark itself transmits the MIME (SMTP).
+      const separate =
+        !!tracker && provider.capabilities.sentCopy === 'client' && everyone.length > 1
       const outgoing = await provider.prepareSubmission(
         account,
-        uploaded,
+        tracker && !separate ? withPixel(tracker.token) : uploaded,
         journal.messageId!,
         protectedMime,
       )
+      const copies: { address: Address; id: string; message: OutgoingMessage }[] = []
+      if (separate)
+        for (const address of everyone) {
+          const own = trackingToken(this.settings.tracking!.secret)
+          const prepared = await provider.prepareSubmission(
+            account,
+            withPixel(own.token),
+            journal.messageId!,
+          )
+          copies.push({
+            address,
+            id: own.id,
+            message: { ...prepared, envelope: { ...outgoing.envelope, to: [address.email] } },
+          })
+        }
       journal.emailId = outgoing.emailId
       journal.envelope = outgoing.envelope
       if (outgoing.mime) {
@@ -1879,9 +1932,9 @@ export class MailService {
       this.localDrafts.set(draft.id, { ...uploaded, status: 'sending' })
       await this.persistDrafts()
       attempted = true
-      const outcome = await this.guard(account.id, (p, a) =>
-        p.submit(a, outgoing, draft.identityId),
-      )
+      const outcome = copies.length
+        ? await this.submitCopies(account.id, copies, draft.identityId)
+        : await this.guard(account.id, (p, a) => p.submit(a, outgoing, draft.identityId))
       accepted = true
       this.outgoing(account.connectionId, undefined)
       journal.accepted = outcome.accepted
@@ -1889,6 +1942,26 @@ export class MailService {
       journal.state = outcome.rejected.length ? 'partial' : 'sent'
       // Acceptance is recorded before filing or cleanup, which may fail independently.
       await this.persistJournal()
+      if (tracker)
+        await this.addTracked({
+          token: tracker.id,
+          ...(copies.length
+            ? {
+                recipients: copies.map((c) => ({
+                  email: c.address.email,
+                  name: c.address.name,
+                  token: c.id,
+                })),
+              }
+            : {}),
+          accountId: account.id,
+          messageId: journal.messageId!.replace(/^<|>$/g, ''),
+          subject: draft.subject,
+          to: draft.to,
+          cc: draft.cc,
+          sentAt: new Date().toISOString(),
+          opens: [],
+        }).catch(() => this.log('tracking-save-failed'))
       if (journal.sentCopy) await this.fileSentCopy(journal, outgoing)
       // A partial send keeps its content so the refused recipients can be recovered.
       if (journal.state === 'sent') await this.completeDraft(uploaded)
@@ -2242,9 +2315,12 @@ export class MailService {
     return 'data:' + attachment.type + ';base64,' + Buffer.from(bytes).toString('base64')
   }
   remoteImage = async (value: string, userInitiated = false): Promise<string | null> =>
-    this.settings.remoteImages || (userInitiated && this.encryption.vault.unlocked)
-      ? remoteImageData(value)
-      : null
+    // Loading your own tracking pixel would log you as the reader.
+    isTrackerUrl(value, this.settings.tracking)
+      ? null
+      : this.settings.remoteImages || (userInitiated && this.encryption.vault.unlocked)
+        ? remoteImageData(value)
+        : null
   senderAvatar = async (email: string): Promise<string | null> => {
     if (!this.settings.remoteImages) return null
     return this.senderAvatars.get(email)
@@ -2286,8 +2362,102 @@ export class MailService {
       // Re-enabling applies to future arrivals, including mail beyond the visible page.
       for (const baseline of this.authArrivals.values()) baseline.since = Date.now()
     }
+    const tracker = (t?: Settings['tracking']) => (t ? t.url + ' ' + t.secret : '')
+    const trackerChanged = tracker(this.settings.tracking) !== tracker(settings.tracking)
     this.settings = settings
+    if (trackerChanged) {
+      this.trackingState = { ...this.trackingState, checkedAt: undefined, error: undefined }
+      void this.checkTracking().catch(() => {})
+    }
     return settings
+  }
+  /**
+   * Submits one tracked copy per recipient. A failure on the first copy means nothing was
+   * sent, as with a single submission; after that, the recipient whose copy failed is refused.
+   */
+  private async submitCopies(
+    accountId: string,
+    copies: { address: Address; message: OutgoingMessage }[],
+    identityId: string,
+  ): Promise<SubmissionOutcome> {
+    const outcome: SubmissionOutcome = { accepted: [], rejected: [] }
+    for (const [index, copy] of copies.entries()) {
+      try {
+        const result = await this.guard(accountId, (p, a) => p.submit(a, copy.message, identityId))
+        outcome.accepted.push(...result.accepted)
+        outcome.rejected.push(...result.rejected)
+      } catch (error) {
+        if (index === 0) throw error
+        this.log('tracked-copy-failed')
+        const definite =
+          error instanceof ProviderError && definiteSubmissionCodes.includes(error.code)
+        outcome.rejected.push({
+          email: copy.address.email,
+          reason: (definite ? '' : 'Not confirmed, it may have arrived. ') + friendlyError(error),
+        })
+      }
+    }
+    return outcome
+  }
+  private trackerFor(draft: Draft) {
+    const settings = readyTracking(this.settings.tracking)
+    if (!settings || !(draft.track ?? settings.byDefault)) return undefined
+    return draft.html.trim() ? trackingToken(settings.secret) : undefined
+  }
+  private async persistTracking() {
+    await this.store.write('tracking', { cursor: this.trackingCursor, state: this.trackingState })
+    this.emit({ type: 'tracking', tracking: this.trackingState })
+  }
+  private async addTracked(message: TrackedMessage) {
+    this.trackingState = {
+      ...this.trackingState,
+      messages: [message, ...this.trackingState.messages],
+    }
+    await this.persistTracking()
+  }
+  tracking = async (): Promise<TrackingState> => this.trackingState
+  /** Reads new hits from the tracker. Concurrent calls share one check. */
+  checkTracking = (): Promise<TrackingState> => {
+    this.trackingCheck ??= this.readTracker().finally(() => (this.trackingCheck = undefined))
+    return this.trackingCheck
+  }
+  private async readTracker(): Promise<TrackingState> {
+    const settings = readyTracking(this.settings.tracking)
+    if (!settings) {
+      if (this.settings.tracking?.url || this.settings.tracking?.secret)
+        this.trackingState = {
+          ...this.trackingState,
+          error: 'Add the tracker’s https address and a secret of at least 32 characters.',
+        }
+      return this.trackingState
+    }
+    try {
+      const { hits, caller } = await fetchHits(
+        settings,
+        this.trackingCursor,
+        this.options.trackerFetch,
+      )
+      const messages = this.trackingState.messages.map((m) => ({ ...m, opens: [...m.opens] }))
+      const notices = applyHits(messages, hits, caller)
+      if (hits.length) this.trackingCursor = Math.max(...hits.map((h) => h.id), this.trackingCursor)
+      this.trackingState = { messages, checkedAt: new Date().toISOString() }
+      for (const text of notices) this.emit({ type: 'notice', text })
+    } catch (error) {
+      this.trackingState = {
+        ...this.trackingState,
+        error: error instanceof Error ? error.message : 'The tracker couldn’t be read.',
+      }
+    }
+    await this.persistTracking()
+    return this.trackingState
+  }
+  forgetTracked = async (token: string): Promise<TrackingState> => {
+    this.trackingState = {
+      ...this.trackingState,
+      messages: this.trackingState.messages.filter((m) => m.token !== token),
+    }
+    await this.persistTracking()
+    return this.trackingState
   }
   diagnostics = async () =>
     JSON.stringify(
@@ -2562,6 +2732,7 @@ export class MailService {
     if (this.timer) clearInterval(this.timer)
     clearTimeout(this.sendTimer)
     clearTimeout(this.reminderTimer)
+    clearInterval(this.trackingTimer)
     if (this.indexingEmit) clearTimeout(this.indexingEmit)
     for (const provider of this.providers.values()) {
       provider.dispose()

@@ -21,6 +21,7 @@ import {
   LockKeyhole,
   Zap,
   Layers,
+  Eye,
 } from '@inlark/ui/icons'
 import { Button, Dropdown, EmptyState, MenuItem, Modal, Select, Switch } from '@inlark/ui'
 import {
@@ -44,6 +45,7 @@ import { ShortcutEditor } from './ShortcutEditor'
 import { SplitSettings } from './SplitSettings'
 import { EncryptionPanel } from './EncryptionSettings'
 import { newMessageAccount } from './compose-account'
+import { TrackingSettings } from './Tracking'
 
 /** A miniature of the app window in one theme. */
 function ThemePreview({ theme, className }: { theme: 'dark' | 'light'; className?: string }) {
@@ -272,6 +274,7 @@ export function SettingsPanel({
               ['signatures', 'Signatures', PenLine],
               ['snippets', 'Snippets', Zap],
               ['splits', 'Split inbox', Layers],
+              ['tracking', 'Open tracking', Eye],
               ['encryption', 'Encryption', LockKeyhole],
               ['shortcuts', 'Shortcuts', Keyboard],
               ['about', 'About', Info],
@@ -897,6 +900,18 @@ export function SettingsPanel({
                   draft={splitDraft}
                   onSave={(splits) => update({ splits })}
                 />
+              </>
+            )}
+            {tab === 'tracking' && (
+              <>
+                <h3 className="m-0 text-[20px] font-[550] tracking-[-0.5px]">Open tracking</h3>
+                <p className="settings-lead text-muted mt-1.5 mb-6 mx-0 text-[12px] leading-[1.6]">
+                  Adds a hidden image to messages you send, and logs the time, IP address and mail
+                  app each time it loads. The image is served by your own tracker on Cloudflare,
+                  since this server isn’t reachable from the internet. Encrypted messages are never
+                  tracked.
+                </p>
+                <TrackingSettings settings={bootstrap.settings} onSave={update} />
               </>
             )}
             {tab === 'shortcuts' && (

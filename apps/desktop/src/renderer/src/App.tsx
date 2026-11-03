@@ -36,6 +36,7 @@ import {
   Forward,
   Undo2,
   Clock,
+  Eye,
   AlarmClock,
   UserSwitch,
   Folder,
@@ -139,6 +140,7 @@ import {
 import { conversationDragType, setConversationDragImage } from './split-drop'
 import { laterLabel } from './later'
 import { RemindDialog, RemindersDialog } from './Reminders'
+import { TrackingDialog } from './Tracking'
 import { rankContacts } from './mentions'
 import { introRecipients } from './intro'
 import { version as packagedVersion } from '../../../package.json'
@@ -220,6 +222,7 @@ export function App() {
     targets: MutationTarget[]
   }>()
   const [remindersOpen, setRemindersOpen] = useState(false)
+  const [trackingOpen, setTrackingOpen] = useState(false)
   const [moveTargets, setMoveTargets] = useState<MutationTarget[]>(),
     [confirmAction, setConfirmAction] = useState<MailAction>()
   const listRef = useRef<HTMLDivElement>(null),
@@ -1091,6 +1094,7 @@ export function App() {
           )
       if (event.type === 'update') setUpdateStatus(event.status)
       if (event.type === 'reminders') queryClient.setQueryData(['reminders'], event.reminders)
+      if (event.type === 'tracking') queryClient.setQueryData(['tracking'], event.tracking)
       if (event.type === 'notice') {
         notify(event.text, event.tone)
         void queryClient.invalidateQueries({ queryKey: ['drafts'] })
@@ -1599,6 +1603,14 @@ export function App() {
       key: keys('goReminders'),
       keywords: 'snooze follow up later',
       run: () => setRemindersOpen(true),
+    },
+    {
+      id: 'tracking',
+      group: 'Mail',
+      label: 'Tracked messages',
+      icon: Eye,
+      keywords: 'open tracking read receipt opened mailtrack pixel',
+      run: () => setTrackingOpen(true),
     },
     {
       id: 'search-mail',
@@ -2970,6 +2982,15 @@ export function App() {
           go({ thread: reminder.threadId, threadAccount: reminder.accountId }, false)
         }}
         onCancel={(reminder) => void cancelReminder(reminder)}
+      />
+      <TrackingDialog
+        open={trackingOpen}
+        onOpenChange={setTrackingOpen}
+        configured={!!settings.tracking?.url && !!settings.tracking?.secret}
+        onSetup={() => {
+          setTrackingOpen(false)
+          openSettings('tracking')
+        }}
       />
       <CommandPalette
         open={paletteOpen}

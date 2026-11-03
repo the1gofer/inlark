@@ -260,6 +260,8 @@ export interface Draft {
   errorKind?: DraftErrorKind
   /** When a scheduled send goes out. Set only by `scheduleSend`; cleared once sending starts. */
   sendAt?: string
+  /** Adds an open-tracking pixel when sent. Missing means the tracking default. */
+  track?: boolean
 }
 export type DraftErrorKind =
   'conflict' | 'connection' | 'outgoingAuthentication' | 'certificate' | 'rejected'
@@ -291,6 +293,8 @@ export interface Settings {
   snippets?: Snippet[]
   /** Split inbox tabs, in the order they are shown. */
   splits?: Split[]
+  /** Open tracking through the public tracker in /tracker. */
+  tracking?: TrackingSettings
 }
 /**
  * A conversation to bring back later. A snooze leaves the inbox until `at`; a follow-up stays
@@ -305,6 +309,54 @@ export interface Reminder {
   at: string
   /** When it was set; a follow-up counts replies after this. */
   since: string
+}
+export interface TrackingSettings {
+  /** The public address of the tracker Worker, such as https://inlark-tracker.example.workers.dev */
+  url: string
+  /** Shared with the tracker. Signs pixel tokens and unlocks its log. */
+  secret: string
+  /** Whether new messages are tracked unless turned off in the composer. */
+  byDefault: boolean
+}
+export interface TrackedOpen {
+  /** The tracker's id for this hit. */
+  hit: number
+  at: string
+  ip: string
+  userAgent: string
+  country?: string
+  city?: string
+  /** The network the request came from, such as "Google LLC". */
+  network?: string
+  /**
+   * reader: loaded directly by the recipient's mail app. gmail: loaded through Google's image
+   * proxy when opened in Gmail. apple: Apple Mail Privacy Protection, which can load without a
+   * read. self: from the same network as inlark. early: seconds after sending, usually a scanner.
+   * proxy: another mail provider's image proxy.
+   */
+  kind: 'reader' | 'gmail' | 'apple' | 'self' | 'early' | 'proxy'
+  /** Who the opened copy went to, when each recipient got their own copy. */
+  recipient?: string
+}
+export interface TrackedMessage {
+  /** The id in the pixel's address, or of the whole message when recipients have their own. */
+  token: string
+  /** Pixel ids for each recipient's own copy, so an open names who opened it. */
+  recipients?: { email: string; name: string; token: string }[]
+  accountId: string
+  /** Message-ID header, without brackets. */
+  messageId: string
+  subject: string
+  to: Address[]
+  cc: Address[]
+  sentAt: string
+  opens: TrackedOpen[]
+}
+export interface TrackingState {
+  messages: TrackedMessage[]
+  /** When the tracker was last read successfully. */
+  checkedAt?: string
+  error?: string
 }
 export interface Snippet {
   id: string
@@ -602,6 +654,7 @@ export type AppEvent =
   /** Something finished in the background, such as a scheduled send, that the user should hear about. */
   | { type: 'notice'; text: string; tone?: 'error' }
   | { type: 'reminders'; reminders: Reminder[] }
+  | { type: 'tracking'; tracking: TrackingState }
 export type UpdateStatus =
   | { phase: 'idle' }
   | { phase: 'downloading'; version: string; percent: number }
@@ -772,6 +825,12 @@ export interface DesktopMailAPI {
   }): Promise<Reminder[]>
   /** Cancels a reminder. A snoozed conversation returns to the inbox at once. */
   cancelReminder(id: string): Promise<Reminder[]>
+  /** Tracked sent messages and their opens. */
+  tracking(): Promise<TrackingState>
+  /** Reads new opens from the tracker now. */
+  checkTracking(): Promise<TrackingState>
+  /** Forgets a tracked message and its log. */
+  forgetTracked(token: string): Promise<TrackingState>
   reconcile(draftId: string): Promise<SendResult>
   submissions(): Promise<SubmissionSummary[]>
   /** Retries only the Sent copy of a message that was already sent. */
