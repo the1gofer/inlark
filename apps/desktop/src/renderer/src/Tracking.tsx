@@ -41,6 +41,12 @@ const ago = (iso: string) => {
 
 export function openSummary(message: TrackedMessage): string {
   const opens = likelyOpens(message)
+  if (message.recipients?.length) {
+    const who = new Set(opens.map((o) => o.recipient))
+    const count = message.recipients.filter((r) => who.has(r.email)).length
+    if (count)
+      return 'Opened by ' + count + ' of ' + message.recipients.length + ' · ' + ago(opens[0].at)
+  }
   if (opens.length)
     return 'Opened' + (opens.length > 1 ? ' ' + opens.length + '×' : '') + ' · ' + ago(opens[0].at)
   return message.opens.length ? 'Not opened yet (image loaded)' : 'Not opened yet'
@@ -115,6 +121,27 @@ function TrackedDetail({ message, onForget }: { message: TrackedMessage; onForge
         </div>
         <div className="mt-2 text-[13px]">{openSummary(message)}</div>
       </div>
+      {!!message.recipients?.length && (
+        <ul className="m-0 p-0 list-none flex flex-col gap-1">
+          {message.recipients.map((r) => {
+            const theirs = likelyOpens(message).filter((o) => o.recipient === r.email)
+            return (
+              <li key={r.token} className="flex items-center gap-2">
+                <Eye size={12} className={theirs.length ? 'text-success' : 'text-muted'} />
+                <span className="flex-1 min-w-0 truncate">{r.name || r.email}</span>
+                <span className={theirs.length ? 'text-success' : 'text-muted'}>
+                  {theirs.length
+                    ? 'Opened' +
+                      (theirs.length > 1 ? ' ' + theirs.length + '×' : '') +
+                      ' · ' +
+                      ago(theirs[0].at)
+                    : 'Not opened yet'}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
       {opens.length ? (
         <ol className="m-0 p-0 list-none flex flex-col border border-solid border-border rounded-lg overflow-hidden">
           {opens.map((open) => (
@@ -126,7 +153,16 @@ function TrackedDetail({ message, onForget }: { message: TrackedMessage; onForge
               )}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <strong className="font-[550]">{openKinds[open.kind].label}</strong>
+                <strong className="font-[550]">
+                  {openKinds[open.kind].label}
+                  {open.recipient && (
+                    <span className="font-normal text-secondary">
+                      {' · '}
+                      {message.recipients?.find((r) => r.email === open.recipient)?.name ||
+                        open.recipient}
+                    </span>
+                  )}
+                </strong>
                 <time dateTime={open.at} className="text-muted">
                   {new Date(open.at).toLocaleString()}
                 </time>

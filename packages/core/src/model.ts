@@ -335,10 +335,14 @@ export interface TrackedOpen {
    * proxy: another mail provider's image proxy.
    */
   kind: 'reader' | 'gmail' | 'apple' | 'self' | 'early' | 'proxy'
+  /** Who the opened copy went to, when each recipient got their own copy. */
+  recipient?: string
 }
 export interface TrackedMessage {
-  /** The id in the pixel's address. */
+  /** The id in the pixel's address, or of the whole message when recipients have their own. */
   token: string
+  /** Pixel ids for each recipient's own copy, so an open names who opened it. */
+  recipients?: { email: string; name: string; token: string }[]
   accountId: string
   /** Message-ID header, without brackets. */
   messageId: string

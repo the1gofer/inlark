@@ -68,6 +68,12 @@ export function evidenceText(message: TrackedMessage, trackerUrl?: string): stri
     'Sent: ' + message.sentAt + ' (' + local(message.sentAt) + ')',
     'Message-ID: <' + message.messageId + '>',
     'Tracking id: ' + message.token + (trackerUrl ? ' (tracker ' + trackerUrl + ')' : ''),
+    ...(message.recipients?.length
+      ? [
+          'Each recipient got their own copy with its own image:',
+          ...message.recipients.map((r) => '  ' + r.email + ': tracking id ' + r.token),
+        ]
+      : []),
     '',
     opens.length
       ? 'Image loads: ' +
@@ -80,7 +86,14 @@ export function evidenceText(message: TrackedMessage, trackerUrl?: string): stri
   ]
   opens.forEach((open, index) => {
     lines.push(
-      index + 1 + '. ' + open.at + ' (' + local(open.at) + ')',
+      index +
+        1 +
+        '. ' +
+        open.at +
+        ' (' +
+        local(open.at) +
+        ')' +
+        (open.recipient ? ', copy sent to ' + open.recipient : ''),
       '   ' + openKinds[open.kind].label + ': ' + openKinds[open.kind].note,
       '   IP ' +
         (open.ip || 'unknown') +
@@ -105,11 +118,12 @@ const csvCell = (value: string) =>
 
 export function evidenceCsv(message: TrackedMessage): string {
   const rows = [
-    ['time_utc', 'kind', 'ip', 'city', 'country', 'network', 'app', 'user_agent'],
+    ['time_utc', 'recipient', 'kind', 'ip', 'city', 'country', 'network', 'app', 'user_agent'],
     ...[...message.opens]
       .sort((a, b) => a.at.localeCompare(b.at))
       .map((o) => [
         o.at,
+        o.recipient || '',
         openKinds[o.kind].label,
         o.ip,
         o.city || '',

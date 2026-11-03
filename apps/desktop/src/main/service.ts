@@ -41,6 +41,7 @@ import {
   type FolderMappings,
   type DiscoveryResult,
   type OutgoingMessage,
+  type SubmissionOutcome,
   type SendResult,
   type ServerSettings,
   type SubmissionSummary,
@@ -57,7 +58,6 @@ import {
   fetchHits,
   injectPixel,
   isTrackerUrl,
-  openedNotice,
   readyTracking,
   trackingToken,
   type FetchJson,
@@ -1885,17 +1885,40 @@ export class MailService {
       uploaded = protectedMime ? draft : await this.uploadDraft(draft)
       // Encrypted mail is never tracked: the pixel would sit outside the encryption.
       const tracker = protectedMime ? undefined : this.trackerFor(uploaded)
+      const withPixel = (token: string) => ({
+        ...uploaded,
+        html: injectPixel(uploaded.html, this.settings.tracking!, token),
+      })
+      const everyone = [
+        ...new Map(
+          [...draft.to, ...draft.cc, ...draft.bcc].map((a) => [a.email.toLowerCase(), a]),
+        ).values(),
+      ]
+      // Each recipient of a group message gets a copy with their own pixel, so an open says
+      // who opened it. Only where inlark itself transmits the MIME (SMTP).
+      const separate =
+        !!tracker && provider.capabilities.sentCopy === 'client' && everyone.length > 1
       const outgoing = await provider.prepareSubmission(
         account,
-        tracker
-          ? {
-              ...uploaded,
-              html: injectPixel(uploaded.html, this.settings.tracking!, tracker.token),
-            }
-          : uploaded,
+        tracker && !separate ? withPixel(tracker.token) : uploaded,
         journal.messageId!,
         protectedMime,
       )
+      const copies: { address: Address; id: string; message: OutgoingMessage }[] = []
+      if (separate)
+        for (const address of everyone) {
+          const own = trackingToken(this.settings.tracking!.secret)
+          const prepared = await provider.prepareSubmission(
+            account,
+            withPixel(own.token),
+            journal.messageId!,
+          )
+          copies.push({
+            address,
+            id: own.id,
+            message: { ...prepared, envelope: { ...outgoing.envelope, to: [address.email] } },
+          })
+        }
       journal.emailId = outgoing.emailId
       journal.envelope = outgoing.envelope
       if (outgoing.mime) {
@@ -1909,9 +1932,9 @@ export class MailService {
       this.localDrafts.set(draft.id, { ...uploaded, status: 'sending' })
       await this.persistDrafts()
       attempted = true
-      const outcome = await this.guard(account.id, (p, a) =>
-        p.submit(a, outgoing, draft.identityId),
-      )
+      const outcome = copies.length
+        ? await this.submitCopies(account.id, copies, draft.identityId)
+        : await this.guard(account.id, (p, a) => p.submit(a, outgoing, draft.identityId))
       accepted = true
       this.outgoing(account.connectionId, undefined)
       journal.accepted = outcome.accepted
@@ -1922,6 +1945,15 @@ export class MailService {
       if (tracker)
         await this.addTracked({
           token: tracker.id,
+          ...(copies.length
+            ? {
+                recipients: copies.map((c) => ({
+                  email: c.address.email,
+                  name: c.address.name,
+                  token: c.id,
+                })),
+              }
+            : {}),
           accountId: account.id,
           messageId: journal.messageId!.replace(/^<|>$/g, ''),
           subject: draft.subject,
@@ -2339,6 +2371,34 @@ export class MailService {
     }
     return settings
   }
+  /**
+   * Submits one tracked copy per recipient. A failure on the first copy means nothing was
+   * sent, as with a single submission; after that, the recipient whose copy failed is refused.
+   */
+  private async submitCopies(
+    accountId: string,
+    copies: { address: Address; message: OutgoingMessage }[],
+    identityId: string,
+  ): Promise<SubmissionOutcome> {
+    const outcome: SubmissionOutcome = { accepted: [], rejected: [] }
+    for (const [index, copy] of copies.entries()) {
+      try {
+        const result = await this.guard(accountId, (p, a) => p.submit(a, copy.message, identityId))
+        outcome.accepted.push(...result.accepted)
+        outcome.rejected.push(...result.rejected)
+      } catch (error) {
+        if (index === 0) throw error
+        this.log('tracked-copy-failed')
+        const definite =
+          error instanceof ProviderError && definiteSubmissionCodes.includes(error.code)
+        outcome.rejected.push({
+          email: copy.address.email,
+          reason: (definite ? '' : 'Not confirmed, it may have arrived. ') + friendlyError(error),
+        })
+      }
+    }
+    return outcome
+  }
   private trackerFor(draft: Draft) {
     const settings = readyTracking(this.settings.tracking)
     if (!settings || !(draft.track ?? settings.byDefault)) return undefined
@@ -2378,10 +2438,10 @@ export class MailService {
         this.options.trackerFetch,
       )
       const messages = this.trackingState.messages.map((m) => ({ ...m, opens: [...m.opens] }))
-      const opened = applyHits(messages, hits, caller)
+      const notices = applyHits(messages, hits, caller)
       if (hits.length) this.trackingCursor = Math.max(...hits.map((h) => h.id), this.trackingCursor)
       this.trackingState = { messages, checkedAt: new Date().toISOString() }
-      for (const message of opened) this.emit({ type: 'notice', text: openedNotice(message) })
+      for (const text of notices) this.emit({ type: 'notice', text })
     } catch (error) {
       this.trackingState = {
         ...this.trackingState,

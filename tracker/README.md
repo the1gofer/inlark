@@ -34,6 +34,10 @@ Then in inlark: Settings → Open tracking → paste the address and the same se
 - Loads within seconds of sending are usually security scanners. Loads from your own internet
   address are you. Neither counts as an open.
 - A recipient who blocks images is never recorded.
-- One message to several people has one image, so an open can't say which recipient opened it.
+- A message to several people is sent as one copy per recipient (same headers, same
+  Message-ID, each with its own image), so each open names who opened it. Only works on IMAP/SMTP
+  accounts; elsewhere one image covers everyone.
+- The copy inlark files in Sent has no image. Gmail files its own Sent copy of what it relays, so
+  check that copy hasn't kept a recipient's image (see the deploy check in PR #35).
 - inlark never loads its own pixels, but opening a sent message in Gmail's web or phone app will
   load it through Google's proxy and look like a Gmail open.

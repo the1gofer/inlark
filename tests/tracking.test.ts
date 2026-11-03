@@ -194,9 +194,9 @@ describe('open tracking in inlark', () => {
     )
     expect(text).toContain('IP 198.51.100.1, Austin, US')
     const csv = evidenceCsv(message).trim().split('\n')
-    expect(csv[0]).toBe('time_utc,kind,ip,city,country,network,app,user_agent')
+    expect(csv[0]).toBe('time_utc,recipient,kind,ip,city,country,network,app,user_agent')
     expect(csv[1]).toBe(
-      '2026-11-03T11:00:00.000Z,Opened,198.51.100.1,Austin,US,,iPhone,Mozilla/5.0 (iPhone)',
+      '2026-11-03T11:00:00.000Z,,Opened,198.51.100.1,Austin,US,,iPhone,Mozilla/5.0 (iPhone)',
     )
   })
 })

@@ -708,8 +708,9 @@ describe('IMAP open tracking', () => {
   })
   const sentMime = (call = 0) => Buffer.from(submit.mock.calls[call][2]).toString('utf8')
 
+  const single = { ...draft, cc: [] }
   it('adds a signed pixel the tracker accepts, and records the message', async () => {
-    await service.send(draft)
+    await service.send(single)
     const mime = sentMime()
     // Quoted-printable may wrap the address; join soft line breaks first.
     const body = mime.replace(/=\r?\n/g, '').replace(/=3D/g, '=')
@@ -744,7 +745,7 @@ describe('IMAP open tracking', () => {
     expect((await service.tracking()).messages).toEqual([])
   })
   it('logs opens from the tracker and says when a message is first opened', async () => {
-    await service.send(draft)
+    await service.send(single)
     const [message] = (await service.tracking()).messages
     const later = (seconds: number) =>
       new Date(Date.parse(message.sentAt) + seconds * 1000).toISOString()
@@ -798,7 +799,7 @@ describe('IMAP open tracking', () => {
     expect(state.error).toBeUndefined()
     expect(state.messages[0].opens.map((o) => o.kind)).toEqual(['early', 'self', 'gmail'])
     expect(events.filter((e) => e.type === 'notice').map((e) => e.text)).toEqual([
-      '“Plans” was opened.',
+      'Alex opened “Plans”.',
     ])
     // The next check asks only for newer hits and adds nothing twice.
     await service.checkTracking()
@@ -808,5 +809,80 @@ describe('IMAP open tracking', () => {
   it('never loads its own pixel when showing sent mail', async () => {
     const value = await service.remoteImage('https://tracker.example.workers.dev/p/abc.def.gif')
     expect(value).toBeNull()
+  })
+  const pixels = (mime: string) =>
+    [
+      ...mime
+        .replace(/=\r?\n/g, '')
+        .replace(/=3D/g, '=')
+        .matchAll(/tracker\.example\.workers\.dev\/p\/([\w-]+)\./g),
+    ].map((m) => m[1])
+  it('sends each recipient of a group message their own copy, so opens name who opened', async () => {
+    submit.mockImplementation(async (_settings, envelope) => ({
+      accepted: envelope.to,
+      rejected: [],
+    }))
+    const result = await service.send({ ...draft, bcc: [{ name: '', email: 'kim@example.org' }] })
+    expect(result.status).toBe('sent')
+    expect(submit).toHaveBeenCalledTimes(3)
+    expect(submit.mock.calls.map((c) => c[1].to)).toEqual([
+      ['alex@example.org'],
+      ['sam@example.org'],
+      ['kim@example.org'],
+    ])
+    const mimes = submit.mock.calls.map((_, i) => sentMime(i))
+    const ids = mimes.map((m) => /Message-ID: <([^>]+)>/.exec(m)![1])
+    expect(new Set(ids).size).toBe(1)
+    // Every copy shows the same headers; only the image differs. Bcc stays hidden.
+    for (const mime of mimes) {
+      expect(mime).toContain('Cc: Sam <sam@example.org>')
+      expect(mime).not.toContain('kim@example.org')
+    }
+    const tokens = mimes.map((m) => pixels(m))
+    expect(tokens.every((t) => t.length === 1)).toBe(true)
+    expect(new Set(tokens.flat()).size).toBe(3)
+    // The copy filed in Sent carries no pixel, so reading it never counts as an open.
+    expect(pixels(server.box('Sent').messages[0].raw.toString())).toEqual([])
+    const [message] = (await service.tracking()).messages
+    expect(message.recipients!.map((r) => [r.email, r.token])).toEqual([
+      ['alex@example.org', tokens[0][0]],
+      ['sam@example.org', tokens[1][0]],
+      ['kim@example.org', tokens[2][0]],
+    ])
+    const at = new Date(Date.parse(message.sentAt) + 600_000).toISOString()
+    const hit = (id: number, token: string) => ({
+      id,
+      token,
+      at,
+      ip: '198.51.100.' + id,
+      ua: 'Mozilla/5.0 (Windows NT 10.0)',
+      country: 'US',
+      city: '',
+      asn: 1,
+      org: 'ISP',
+    })
+    hits = [hit(1, tokens[1][0]), hit(2, tokens[1][0])]
+    const state = await service.checkTracking()
+    expect(state.messages[0].opens.map((o) => o.recipient)).toEqual([
+      'sam@example.org',
+      'sam@example.org',
+    ])
+    expect(events.filter((e) => e.type === 'notice').map((e) => e.text)).toEqual([
+      'Sam opened “Plans”.',
+    ])
+  })
+  it('refuses only the recipient whose own copy failed after others were sent', async () => {
+    submit
+      .mockResolvedValueOnce({ accepted: ['alex@example.org'], rejected: [] })
+      .mockRejectedValueOnce(new ProviderError('submissionRejected', 'Mailbox unavailable'))
+    const result = await service.send(draft)
+    expect(result.status).toBe('partial')
+    expect(result.rejected?.map((a) => a.email)).toEqual(['sam@example.org'])
+  })
+  it('sends nothing when the first copy fails', async () => {
+    submit.mockRejectedValueOnce(new ProviderError('submissionRejected', 'Refused'))
+    await expect(service.send(draft)).rejects.toThrow()
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect((await service.tracking()).messages).toEqual([])
   })
 })

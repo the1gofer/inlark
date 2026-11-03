@@ -116,18 +116,28 @@ export async function fetchHits(
   return { hits, caller }
 }
 
-/** Adds new hits to the tracked messages they belong to. Returns those that gained a first open. */
+/**
+ * Adds new hits to the tracked messages they belong to. Returns a notice for each message, or
+ * each recipient's own copy, that was opened for the first time.
+ */
 export function applyHits(
   messages: TrackedMessage[],
   hits: TrackerHit[],
   caller: string,
-): TrackedMessage[] {
-  const byToken = new Map(messages.map((m) => [m.token, m]))
-  const firstOpened: TrackedMessage[] = []
+): string[] {
+  const byToken = new Map<string, { message: TrackedMessage; recipient?: Address }>()
+  for (const message of messages) {
+    byToken.set(message.token, { message })
+    for (const r of message.recipients || [])
+      byToken.set(r.token, { message, recipient: { name: r.name, email: r.email } })
+  }
+  const notices: string[] = []
   for (const hit of hits) {
-    const message = byToken.get(hit.token)
-    if (!message || message.opens.some((o) => o.hit === hit.id)) continue
-    const wasOpened = message.opens.some(countsAsOpen)
+    const found = byToken.get(hit.token)
+    if (!found || found.message.opens.some((o) => o.hit === hit.id)) continue
+    const { message, recipient } = found
+    const theirs = (o: TrackedOpen) => !recipient || o.recipient === recipient.email
+    const wasOpened = message.opens.some((o) => theirs(o) && countsAsOpen(o))
     const open: TrackedOpen = {
       hit: hit.id,
       at: hit.at,
@@ -137,17 +147,18 @@ export function applyHits(
       city: hit.city || undefined,
       network: hit.org || undefined,
       kind: classifyOpen(hit, message.sentAt, caller),
+      ...(recipient ? { recipient: recipient.email } : {}),
     }
     message.opens.push(open)
-    if (!wasOpened && countsAsOpen(open)) firstOpened.push(message)
+    if (!wasOpened && countsAsOpen(open)) notices.push(openedNotice(message, recipient))
   }
-  return firstOpened
+  return notices
 }
 
-export function openedNotice(message: TrackedMessage): string {
+export function openedNotice(message: TrackedMessage, recipient?: Address): string {
   const everyone = [...message.to, ...message.cc]
-  // With several recipients a single pixel can't say who opened it.
-  const who: Address | undefined = everyone.length === 1 ? everyone[0] : undefined
+  // Without a copy of their own, an open can't say which of several recipients it was.
+  const who = recipient || (everyone.length === 1 ? everyone[0] : undefined)
   const subject = message.subject ? '“' + message.subject + '”' : 'your message'
   return who ? (who.name || who.email) + ' opened ' + subject + '.' : subject + ' was opened.'
 }
