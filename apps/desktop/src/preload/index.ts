@@ -38,6 +38,7 @@ const methods = [
   'drafts',
   'resumeDraft',
   'stageRemoteAttachments',
+  'stageConversationsAsAttachments',
   'saveDraft',
   'syncDraft',
   'deleteDraft',

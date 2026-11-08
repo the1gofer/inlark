@@ -299,6 +299,7 @@ else {
         drafts: service.drafts,
         resumeDraft: service.resumeDraft,
         stageRemoteAttachments: service.stageRemoteAttachments,
+        stageConversationsAsAttachments: service.stageConversationsAsAttachments,
         saveDraft: service.saveDraft,
         syncDraft: service.syncDraft,
         deleteDraft: service.deleteDraft,

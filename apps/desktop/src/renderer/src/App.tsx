@@ -236,6 +236,7 @@ export function App() {
     // Conversations with an action still running. Triage may act on the next one meanwhile.
     acting = useRef(new Set<string>())
   const selectionAnchor = useRef<string | undefined>(undefined)
+  const [forwarding, setForwarding] = useState(false)
   const [draftSelected, setDraftSelected] = useState(new Set<string>()),
     draftAnchor = useRef<string | undefined>(undefined)
   const [unsubscribes, setUnsubscribes] = useState(new Map<string, 'pending' | 'done'>())
@@ -467,6 +468,8 @@ export function App() {
     lastRead.current = ''
   }
   const open = (c: Conversation) => {
+    // On a phone, once something is selected, tapping rows adds to or removes from the selection.
+    if (phone && selected.size && !allMatching) return toggle(c.key)
     if (listRef.current) offsets.current.set(queryId, listRef.current.scrollTop)
     setFocused(c.key)
     go({ thread: c.id, threadAccount: c.accountId }, false)
@@ -693,8 +696,11 @@ export function App() {
     message?: Message,
     kind: 'reply' | 'replyAll' | 'forward' | 'intro' = 'reply',
     partial: Partial<Draft> = {},
+    /** Conversations to attach whole, as `.eml` files, when forwarding a selection. */
+    forwardThreads?: MutationTarget[],
   ) => {
     const id =
+      partial.accountId ||
       message?.accountId ||
       newMessageAccount(accounts, route.account, settings.defaultAccountId)?.id
     if (!id) {
@@ -809,9 +815,50 @@ export function App() {
         draft.attachments = (
           await api.stageRemoteAttachments(id, message.attachments, draft.encryption === 'encrypt')
         ).map((a) => ({ ...a, cid: undefined }))
+      if (forwardThreads?.length)
+        for (const source of new Set(forwardThreads.map((t) => t.accountId)))
+          draft.attachments.push(
+            ...(await api.stageConversationsAsAttachments(
+              source,
+              forwardThreads.filter((t) => t.accountId === source).map((t) => t.threadId),
+              draft.encryption === 'encrypt',
+            )),
+          )
       setComposer(draft)
     } catch (e) {
       fail(e)
+    }
+  }
+  /** Forwards the selected conversations in one message, each attached as its original. */
+  const forwardSelection = async () => {
+    if (allMatching) return
+    const chosen = conversations.filter((c) => selected.has(c.key))
+    if (!chosen.length) return
+    const sources = [...new Set(chosen.map((c) => c.accountId))]
+    const first = chosen[0]!
+    const subject = first.subject || '(No subject)'
+    const toastId = notify(
+      chosen.length === 1
+        ? 'Preparing the conversation…'
+        : 'Preparing ' + chosen.length + ' conversations…',
+      'info',
+    )
+    setForwarding(true)
+    try {
+      await compose(
+        undefined,
+        'reply',
+        {
+          // Conversations from several accounts go out from the usual new-message account.
+          ...(sources.length === 1 ? { accountId: first.accountId } : {}),
+          subject:
+            'Fwd: ' + subject + (chosen.length > 1 ? ' and ' + (chosen.length - 1) + ' more' : ''),
+        },
+        chosen.map((c) => ({ accountId: c.accountId, threadId: c.id })),
+      )
+    } finally {
+      setForwarding(false)
+      setToastState((current) => (current?.id === toastId ? undefined : current))
     }
   }
   const onMailto = (url: string) => {
@@ -1286,6 +1333,8 @@ export function App() {
   const canAct = !blocked && hasTarget
   const inList = !blocked && !route.thread
   const inThread = !blocked && !!route.thread && !!latest
+  const canForwardSelection =
+    !blocked && !forwarding && view !== 'drafts' && !allMatching && !!selected.size
   const inMailList = inList && view !== 'drafts'
   const toggleUnread = () =>
     setFilters((current) => ({ ...current, unread: current.unread ? undefined : true }))
@@ -1376,7 +1425,11 @@ export function App() {
       undo: { run: () => void undo(), enabled: !blocked && canUndo },
       reply: { run: () => latest && void compose(latest), enabled: inThread },
       replyAll: { run: () => latest && void compose(latest, 'replyAll'), enabled: inThread },
-      forward: { run: () => latest && void compose(latest, 'forward'), enabled: inThread },
+      forward: {
+        run: () =>
+          route.thread ? latest && void compose(latest, 'forward') : void forwardSelection(),
+        enabled: inThread || (canForwardSelection && !route.thread),
+      },
       unsubscribe: {
         run: () => void unsubscribe(),
         enabled: !blocked && unsubscribeState === 'available',
@@ -1549,6 +1602,20 @@ export function App() {
                 icon: UserSwitch,
                 keywords: 'introduction bcc thanks',
                 run: () => void compose(latest, 'intro'),
+              },
+            ]
+          : []),
+        ...(!route.thread && canForwardSelection
+          ? [
+              {
+                id: 'forward-selection',
+                label:
+                  selected.size > 1 ? 'Forward ' + selected.size + ' conversations' : 'Forward',
+                description: 'In one message, with each conversation attached',
+                icon: Forward,
+                key: keys('forward'),
+                keywords: 'attachment eml send multiple',
+                run: () => void forwardSelection(),
               },
             ]
           : []),
@@ -2423,6 +2490,16 @@ export function App() {
                     <Archive size={16} />
                   </HintIconButton>
                 )}
+                {!allMatching && (
+                  <IconButton
+                    label="Forward selected"
+                    shortcut={keys('forward')}
+                    disabled={busy || forwarding}
+                    onClick={() => void forwardSelection()}
+                  >
+                    <Forward size={16} />
+                  </IconButton>
+                )}
                 {!!selected.size && !allMatching && (
                   <IconButton
                     label="Add to split…"
@@ -2651,10 +2728,10 @@ export function App() {
                       'mail-row flex items-center h-[var(--row-height)] py-0 pr-5 pl-7 gap-4 border-b border-solid border-b-border',
                       'text-[13px] relative [&.unread]:bg-[color-mix(in_srgb,_var(--surface)_32%,_var(--bg))]',
                       '[&.focused]:shadow-[inset_2px_0_var(--accent)] [&.focused]:bg-selected [&.selected]:bg-selected',
-                      '[&:hover_.row-selector_.checkbox]:opacity-100 [&.selected_.row-selector_.checkbox]:opacity-100',
-                      '[&:hover_.unread-dot]:opacity-0 [&.selected_.unread-dot]:opacity-0 [&:hover_.row-star]:opacity-100',
-                      '[&:focus-within_.row-star]:opacity-100 [&:hover_.row-quick-actions]:opacity-100',
-                      '[&:hover_.row-quick-actions]:pointer-events-auto [&:focus-within_.row-quick-actions]:opacity-100',
+                      'hover:[&_.row-selector_.checkbox]:opacity-100 [&.selected_.row-selector_.checkbox]:opacity-100',
+                      'hover:[&_.unread-dot]:opacity-0 [&.selected_.unread-dot]:opacity-0 hover:[&_.row-star]:opacity-100',
+                      '[&:focus-within_.row-star]:opacity-100 hover:[&_.row-quick-actions]:opacity-100',
+                      'hover:[&_.row-quick-actions]:pointer-events-auto [&:focus-within_.row-quick-actions]:opacity-100',
                       '[&:focus-within_.row-quick-actions]:pointer-events-auto @max-[900px]/mail:gap-3 @max-[900px]/mail:pl-5.5',
                       '@max-[900px]/mail:pr-3.5 @max-[680px]/mail:py-0 @max-[680px]/mail:pr-4 @max-[680px]/mail:pl-5',
                       '@max-[680px]/mail:gap-3 @max-[680px]/mail:[.density-comfortable_&]:grid',
