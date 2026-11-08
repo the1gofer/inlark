@@ -805,6 +805,12 @@ export interface DesktopMailAPI {
     attachments: Attachment[],
     protectedDraft?: boolean,
   ): Promise<StagedAttachment[]>
+  /** Stages every message of these conversations as `.eml` attachments, to forward them. */
+  stageConversationsAsAttachments(
+    accountId: string,
+    threadIds: string[],
+    protectedDraft?: boolean,
+  ): Promise<StagedAttachment[]>
   saveDraft(draft: Draft): Promise<Draft>
   syncDraft(draft: Draft): Promise<Draft>
   deleteDraft(id: string): Promise<void>

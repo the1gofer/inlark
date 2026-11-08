@@ -96,10 +96,10 @@ export function ConversationRow({
           className={cn(
             'mail-row flex items-center h-[var(--row-height)] py-0 pr-5 pl-7 gap-4 cursor-pointer border-b border-solid',
             'border-b-border text-[13px] relative hover:bg-hover',
-            '[&:hover_.row-selector_.checkbox]:opacity-100 [&.selected_.row-selector_.checkbox]:opacity-100',
-            '[&:hover_.unread-dot]:opacity-0 [&.selected_.unread-dot]:opacity-0 [&:hover_.row-star]:opacity-100',
-            '[&:focus-within_.row-star]:opacity-100 [&:hover_.row-quick-actions]:opacity-100',
-            '[&:hover_.row-quick-actions]:pointer-events-auto [&:focus-within_.row-quick-actions]:opacity-100',
+            'hover:[&_.row-selector_.checkbox]:opacity-100 [&.selected_.row-selector_.checkbox]:opacity-100',
+            'hover:[&_.unread-dot]:opacity-0 [&.selected_.unread-dot]:opacity-0 hover:[&_.row-star]:opacity-100',
+            '[&:focus-within_.row-star]:opacity-100 hover:[&_.row-quick-actions]:opacity-100',
+            'hover:[&_.row-quick-actions]:pointer-events-auto [&:focus-within_.row-quick-actions]:opacity-100',
             '[&:focus-within_.row-quick-actions]:pointer-events-auto @max-[900px]/mail:gap-3 @max-[900px]/mail:pl-5.5',
             '@max-[900px]/mail:pr-3.5 @max-[680px]/mail:py-0 @max-[680px]/mail:pr-4 @max-[680px]/mail:pl-5',
             '@max-[680px]/mail:gap-3 @max-[680px]/mail:[.density-comfortable_&]:grid',
@@ -157,7 +157,12 @@ export function ConversationRow({
               '@max-[680px]/mail:[.density-comfortable_&]:row-end-3',
             )}
             role="gridcell"
-            onClick={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              // The whole column selects, so a tap that misses the small box still counts.
+              if (busy || (event.target as Element).closest('.checkbox')) return
+              onSelect(event.shiftKey)
+            }}
           >
             <Checkbox
               aria-label={'Select ' + subject}

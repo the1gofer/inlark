@@ -47,9 +47,9 @@ export function DraftRows({
             className={cn(
               'draft-row flex gap-4 items-center border-b border-solid border-b-border py-0 pr-6.5 pl-8 text-secondary',
               'hover:bg-hover [&.selected]:bg-selected',
-              '[&:hover_.draft-selector:not(:has([data-disabled]))_.checkbox]:opacity-100',
-              '[&:hover_.draft-selector:not(:has([data-disabled]))>svg]:opacity-0 [&:hover_.draft-actions_.button]:opacity-100',
-              '[&:hover_.draft-actions:has(.button)>svg]:opacity-0',
+              'hover:[&_.draft-selector:not(:has([data-disabled]))_.checkbox]:opacity-100',
+              'hover:[&_.draft-selector:not(:has([data-disabled]))>svg]:opacity-0 hover:[&_.draft-actions_.button]:opacity-100',
+              'hover:[&_.draft-actions:has(.button)>svg]:opacity-0',
               selected.has(item.key) && 'selected',
             )}
             key={item.key}

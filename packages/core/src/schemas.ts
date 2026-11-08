@@ -332,6 +332,11 @@ export const ipcSchemas = {
   ]),
   resumeDraft: z.tuple([id, id]),
   stageRemoteAttachments: z.tuple([id, z.array(attachmentSchema).max(100), z.boolean().optional()]),
+  stageConversationsAsAttachments: z.tuple([
+    id,
+    z.array(id).min(1).max(100),
+    z.boolean().optional(),
+  ]),
   drafts: z.tuple([]),
   saveDraft: z.tuple([draftSchema]),
   syncDraft: z.tuple([draftSchema]),

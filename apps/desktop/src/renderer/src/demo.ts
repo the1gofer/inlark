@@ -1424,6 +1424,18 @@ export const demoAPI: DesktopMailAPI = {
     return linked
   },
   stageRemoteAttachments: async () => [],
+  stageConversationsAsAttachments: async (accountId, threadIds) => {
+    const accountIndex = demoAccounts.findIndex((a) => a.id === accountId)
+    return threadIds.map((threadId) => {
+      const m = get(accountIndex, Number(threadId.replace('thread-', '')))
+      return {
+        id: crypto.randomUUID(),
+        name: (m?.subject || 'Forwarded message') + '.eml',
+        type: 'message/rfc822',
+        size: m?.size || 4096,
+      }
+    })
+  },
   drafts: async () => [...drafts.values()],
   saveDraft: async (draft) => {
     drafts.set(draft.id, draft)

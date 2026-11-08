@@ -133,6 +133,23 @@ type Journal = {
   dismissed?: boolean
   at: string
 }
+/** Most providers refuse messages much larger than this, such as Gmail at 25 MB. */
+const maxForwardBytes = 25 * 1024 * 1024
+/** A file name for a forwarded message, from its subject, unique among `taken`. */
+export function emlName(subject: string, taken: Set<string>): string {
+  const base =
+    subject
+      .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^\.+/, '')
+      .slice(0, 80)
+      .trim() || 'Forwarded message'
+  let name = base + '.eml'
+  for (let n = 2; taken.has(name.toLowerCase()); n++) name = base + ' (' + n + ').eml'
+  taken.add(name.toLowerCase())
+  return name
+}
 /**
  * A message whose structure shows no signature or encryption. Opening it needs no copy of the
  * original, which for mail with large attachments can be far bigger than its readable parts.
@@ -1087,26 +1104,91 @@ export class MailService {
     protectedDraft = false,
   ): Promise<StagedAttachment[]> => {
     if (this.protectionTransition) throw new Error('The vault is locking.')
-    const directory = join(this.store.directory, 'attachments')
-    await mkdir(directory, { recursive: true, mode: 0o700 })
     const staged: StagedAttachment[] = []
     for (const attachment of attachments) {
       const bytes = await this.attachmentBytes(accountId, attachment)
-      const item: StagedAttachment = {
-        id: randomUUID(),
-        name: attachment.name,
-        type: attachment.type,
-        size: bytes.length,
-        cid: attachment.cid,
-      }
-      if (protectedDraft) {
-        await this.protectStagedAttachment(item, bytes)
-      } else await writeFile(join(directory, item.id), bytes, { mode: 0o600 })
-      this.staging.set(item.id, item)
-      staged.push(item)
-      await this.persistStaging()
+      staged.push(
+        await this.stageBytes(
+          { name: attachment.name, type: attachment.type, cid: attachment.cid },
+          bytes,
+          protectedDraft,
+        ),
+      )
     }
     return staged
+  }
+  /**
+   * Stages the original source of every message in the given conversations as `.eml`
+   * attachments, oldest first, so several conversations can be forwarded in one message.
+   * Reading the source never changes the messages on the server.
+   */
+  stageConversationsAsAttachments = async (
+    accountId: string,
+    threadIds: string[],
+    protectedDraft = false,
+  ): Promise<StagedAttachment[]> => {
+    if (this.protectionTransition) throw new Error('The vault is locking.')
+    const order = new Map(threadIds.map((id, index) => [id, index]))
+    const messages = await this.guard(accountId, (p, a) => {
+      if (!p.rawMessage) throw new Error('This account cannot forward messages as attachments.')
+      return p.conversationMetadata(a, [...new Set(threadIds)])
+    })
+    // The same message can be listed once per folder it is in, such as Inbox and All Mail.
+    const seen = new Set<string>()
+    const chosen = messages
+      .filter((m) => !m.keywords.$draft)
+      .sort(
+        (a, b) =>
+          (order.get(a.threadId) ?? 0) - (order.get(b.threadId) ?? 0) ||
+          a.receivedAt.localeCompare(b.receivedAt),
+      )
+      .filter((m) => {
+        const key = m.messageId?.[0] || m.id
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    if (!chosen.length) throw new Error('There are no messages to forward.')
+    if (chosen.length > 100) throw new Error('Forward at most 100 messages at a time.')
+    const total = chosen.reduce((sum, m) => sum + (m.size || 0), 0)
+    if (total > maxForwardBytes)
+      throw new Error('These messages are too large to forward together. Forward fewer at a time.')
+    const names = new Set<string>()
+    const staged: StagedAttachment[] = []
+    for (const message of chosen) {
+      const bytes = await this.guard(accountId, (p, a) =>
+        p.rawMessage!(a, message.id, maxMessageBytes),
+      )
+      staged.push(
+        await this.stageBytes(
+          { name: emlName(message.subject, names), type: 'message/rfc822' },
+          bytes,
+          protectedDraft,
+        ),
+      )
+    }
+    return staged
+  }
+  private async stageBytes(
+    attachment: Pick<StagedAttachment, 'name' | 'type' | 'cid'>,
+    bytes: Uint8Array,
+    protectedDraft: boolean,
+  ): Promise<StagedAttachment> {
+    const directory = join(this.store.directory, 'attachments')
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    const item: StagedAttachment = {
+      id: randomUUID(),
+      name: attachment.name,
+      type: attachment.type,
+      size: bytes.length,
+      cid: attachment.cid,
+    }
+    if (protectedDraft) {
+      await this.protectStagedAttachment(item, bytes)
+    } else await writeFile(join(directory, item.id), bytes, { mode: 0o600 })
+    this.staging.set(item.id, item)
+    await this.persistStaging()
+    return item
   }
   /** Reads a staged attachment. Only IDs recorded by this service resolve to files. */
   private async protectStagedAttachment(attachment: StagedAttachment, bytes: Uint8Array) {

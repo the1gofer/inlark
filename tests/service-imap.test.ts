@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
   shell: {},
   Notification: { isSupported: () => false },
 }))
-import { MailService, type ProviderFactory } from '../apps/desktop/src/main/service'
+import { MailService, emlName, type ProviderFactory } from '../apps/desktop/src/main/service'
 import { JsonStore } from '../apps/desktop/src/main/storage'
 import { openInProcessIndex } from '../apps/desktop/src/main/imap-index/sqlite-index'
 import { ImapProvider } from '../packages/imap/src'
@@ -304,6 +304,51 @@ describe('legacy connection migration', () => {
     await writeFile(join(directory, 'connections.json'), original)
     await expect(start()).rejects.toThrow('unsupported')
     expect(await readFile(join(directory, 'connections.json'), 'utf8')).toBe(original)
+  })
+})
+
+describe('forwarding several conversations', () => {
+  it('attaches each original as an .eml without changing the messages, and sends them', async () => {
+    server.deliver('INBOX', { messageId: 'a1@x', subject: 'Invoice: May', text: 'Amount due' })
+    server.deliver('INBOX', { messageId: 'b1@x', subject: 'Trip', text: 'Flights booked' })
+    server.deliver('INBOX', {
+      messageId: 'b2@x',
+      subject: 'Re: Trip',
+      text: 'Hotel too',
+      inReplyTo: 'b1@x',
+      references: ['b1@x'],
+    })
+    await service.connect(input)
+    await (service as any).providers.get('imap-connection').syncPass('all')
+    const page = await service.query({ view: 'inbox' })
+    const invoice = page.items.find((c) => c.subject === 'Invoice: May')!
+    const trip = page.items.find((c) => /Trip/.test(c.subject))!
+    const before = server.box('INBOX').messages.map((m) => [...m.flags])
+    const staged = await service.stageConversationsAsAttachments(accountId, [invoice.id, trip.id])
+    expect(staged.every((a) => a.type === 'message/rfc822')).toBe(true)
+    expect(staged[0]!.name).toBe('Invoice May.eml')
+    const sources = await Promise.all(
+      staged.map(async (a) => Buffer.from(await service.readStagedAttachment(a.id)).toString()),
+    )
+    expect(sources[0]).toContain('Amount due')
+    expect(sources.slice(1).join('\n')).toContain('Flights booked')
+    // Reading the originals leaves them exactly as they were, unread included.
+    expect(server.box('INBOX').messages.map((m) => [...m.flags])).toEqual(before)
+
+    let mime = ''
+    submit.mockImplementationOnce(async (_settings, envelope) => {
+      mime = await readFile(join(directory, 'outgoing', draftId + '.eml'), 'utf8')
+      return { accepted: envelope.to, rejected: [] }
+    })
+    await service.send({ ...draft, subject: 'Fwd: Invoice: May and 1 more', attachments: staged })
+    expect(mime.match(/Content-Type: message\/rfc822/g)?.length).toBe(staged.length)
+    expect(mime).toContain('Invoice May.eml')
+  })
+  it('refuses an empty selection', async () => {
+    await service.connect(input)
+    await expect(service.stageConversationsAsAttachments(accountId, ['missing'])).rejects.toThrow(
+      'There are no messages to forward.',
+    )
   })
 })
 
@@ -884,5 +929,15 @@ describe('IMAP open tracking', () => {
     await expect(service.send(draft)).rejects.toThrow()
     expect(submit).toHaveBeenCalledTimes(1)
     expect((await service.tracking()).messages).toEqual([])
+  })
+})
+
+describe('forwarded message file names', () => {
+  it('keeps names safe and unique', () => {
+    const taken = new Set<string>()
+    expect(emlName('Re: a/b', taken)).toBe('Re a b.eml')
+    expect(emlName('Re: a/b', taken)).toBe('Re a b (2).eml')
+    expect(emlName('', taken)).toBe('Forwarded message.eml')
+    expect(emlName('..hidden', taken)).toBe('hidden.eml')
   })
 })
