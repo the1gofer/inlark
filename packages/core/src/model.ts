@@ -250,6 +250,11 @@ export interface Draft {
   replyThreadId?: string
   serverId?: string
   serverFingerprint?: string
+  /**
+   * Server copies this draft has just replaced and is still removing. Set only by the service
+   * while a save is underway, never stored, so lists don't show the old copy as another draft.
+   */
+  replacedServerIds?: string[]
   encryption?: 'none' | 'encrypt' | 'sign'
   encryptionRequired?: boolean
   downgradeConfirmed?: boolean

@@ -541,6 +541,33 @@ describe('IMAP drafts', () => {
     expect(second.serverId).not.toBe(first.serverId)
     expect(server.box('Drafts').messages.map((m) => m.input.text?.trim())).toEqual(['Hello again'])
   })
+  it('points at the new server copy while the replaced one is still being removed', async () => {
+    const first = await service.syncDraft(draft)
+    const provider = (service as any).providers.get('imap-connection')
+    const update = provider.update.bind(provider)
+    let during: Awaited<ReturnType<typeof service.drafts>> = []
+    let resumed: Awaited<ReturnType<typeof service.resumeDraft>> | undefined
+    vi.spyOn(provider, 'update').mockImplementation(async (...args: any[]) => {
+      // A list refreshed while Gmail is slow to remove the old copy sees both server copies.
+      during = await service.drafts()
+      resumed = await service.resumeDraft(accountId, first.serverId!)
+      return update(...args)
+    })
+    const second = await service.syncDraft({
+      ...first,
+      text: 'Hello again',
+      updatedAt: '2026-09-23T10:01:00.000Z',
+    })
+    expect(during).toHaveLength(1)
+    expect(during[0].serverId).toBe(second.serverId)
+    expect(during[0].replacedServerIds).toEqual([first.serverId])
+    // Opening the old copy meanwhile resumes the same draft instead of starting a second one.
+    expect(resumed?.id).toBe(first.id)
+    const after = await service.drafts()
+    expect(after).toHaveLength(1)
+    expect(after[0].replacedServerIds).toBeUndefined()
+    expect(server.box('Drafts').messages).toHaveLength(1)
+  })
   it('drops a saved draft once another client sends or deletes its server copy', async () => {
     const saved = await service.syncDraft(draft)
     const unsaved = await service.saveDraft({

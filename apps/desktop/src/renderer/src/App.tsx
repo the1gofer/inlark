@@ -391,7 +391,20 @@ export function App() {
             old.status !== 'uncertain' &&
             old.updatedAt < draft.updatedAt)
         )
-          merged.set(draft.id, draft)
+          // Newer typing may be only in this browser, but the service owns which server copy a
+          // draft points to. A browser copy saved before the last upload still names the copy
+          // that upload replaced, which made the new copy list as a second draft.
+          merged.set(
+            draft.id,
+            old
+              ? {
+                  ...draft,
+                  serverId: old.serverId ?? draft.serverId,
+                  serverFingerprint: old.serverFingerprint ?? draft.serverFingerprint,
+                  replacedServerIds: old.replacedServerIds,
+                }
+              : draft,
+          )
       }
       return [...merged.values()]
         .filter((d) => accounts.some((a) => a.id === d.accountId) && d.status !== 'sent')
