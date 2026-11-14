@@ -81,6 +81,9 @@ import {
   type UpdateStatus,
   type View,
   parseSearch,
+  inView,
+  searchScope,
+  withoutIn,
   type SearchField,
 } from '@inlark/core'
 import { api, isDemo } from './api'
@@ -306,21 +309,41 @@ export function App() {
   const query: MailQuery = useMemo(() => {
     // Operators such as from: become their own fields; plain words stay a text search.
     // Gmail accounts take the typed text as is instead, so results match Gmail's own search.
-    const { starred, ...typed } = parseSearch(route.q || '').search
+    const { starred, in: within, ...typed } = parseSearch(route.q || '').search
     const searchFields = [
       ...(Object.keys(typed) as SearchField[]),
       ...(starred ? (['starred'] as const) : []),
     ].filter((field) => field === 'starred' || filters[field] === undefined)
+    // `in:sent` or `in:"Folder"` limits a search to that place, as in Gmail. The place is searched
+    // directly, so the filter itself is taken out of the words sent to the server.
+    const named = within ? inView(within) : undefined
+    const folder =
+      within && !named
+        ? Object.entries(mailboxCounts.boxesByAccount)
+            .filter(([id]) => !queryAccount || id === queryAccount)
+            .flatMap(([, list]) => list)
+            .find((b) => b.name.toLowerCase() === within.toLowerCase())
+        : undefined
+    const words = route.q?.trim() ? (named || folder ? withoutIn(route.q) : route.q.trim()) : ''
     return {
-      view: route.q ? (starred ? 'starred' : 'all') : view,
-      accountId: queryAccount,
-      mailboxId: route.folder,
+      view: route.q ? named || (starred ? 'starred' : 'all') : view,
+      accountId: folder ? folder.accountId : queryAccount,
+      mailboxId: route.q ? folder?.id : route.folder,
       ...typed,
-      ...(route.q?.trim() ? { search: route.q.trim(), searchFields } : {}),
+      ...(words ? { search: words, searchFields } : {}),
       ...(splits.length ? splitQuery(splits, activeSplit) : {}),
       ...filters,
     }
-  }, [view, queryAccount, route.folder, route.q, filters, splits, activeSplit])
+  }, [
+    view,
+    queryAccount,
+    route.folder,
+    route.q,
+    filters,
+    splits,
+    activeSplit,
+    mailboxCounts.boxesByAccount,
+  ])
   // Unread conversations in each tab: the main Inbox tab first, then each split.
   const splitUnread = useQueries({
     queries: (splits.length ? [undefined, ...splits] : []).map((split) => {
@@ -1275,10 +1298,24 @@ export function App() {
       askAddToSplit(chosen, splitId ?? NEW_SPLIT)
     },
   })
+  // A search started in a folder searches that folder; the filter shows in the box to remove.
+  const scope = searchScope(view, route.folder ? currentFolder?.name : undefined)
   const focusSearch = () => {
     setSearchOpen(true)
-    requestAnimationFrame(() => searchInput.current?.select())
+    if (!route.q && !search.trim()) {
+      setSearch(scope)
+      requestAnimationFrame(() => {
+        const input = searchInput.current
+        input?.focus()
+        input?.setSelectionRange(scope.length, scope.length)
+      })
+    } else requestAnimationFrame(() => searchInput.current?.select())
   }
+  // Moving to another folder with the box open moves its filter along.
+  useEffect(() => {
+    if (!route.q && searchOpen) setSearch(scope)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope])
   const latest = thread.data && replyTarget(thread.data)
   // The newest mailing-list message carries the sender's current unsubscribe address.
   const listMessage = thread.data && [...thread.data].reverse().find((m) => m.unsubscribe)
@@ -2266,7 +2303,7 @@ export function App() {
                 )}
                 onSubmit={(e) => {
                   e.preventDefault()
-                  go({ q: search || undefined, ...(search ? { view: 'all' } : {}) }, false)
+                  go({ q: search.trim() || undefined }, false)
                 }}
               >
                 <Search size={16} />

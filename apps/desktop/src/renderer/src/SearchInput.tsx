@@ -49,7 +49,7 @@ export const SearchInput = forwardRef(function SearchInput(
       <input
         ref={ref}
         className="relative w-full text-transparent caret-foreground placeholder:text-muted selection:bg-[color-mix(in_oklab,var(--color-primary)_35%,transparent)]"
-        placeholder="Search mail, or try from: subject: has:attachment"
+        placeholder="Search mail, or try from: in:sent has:attachment"
         aria-label="Search email"
         spellCheck={false}
         autoCapitalize="off"
