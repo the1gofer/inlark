@@ -1,4 +1,4 @@
-import type { MailQuery, SearchField } from './model'
+import type { MailQuery, SearchField, View } from './model'
 
 /** Operators the search box understands, as in Gmail and Superhuman. */
 export const searchOperators = [
@@ -11,6 +11,7 @@ export const searchOperators = [
   'before',
   'newer_than',
   'older_than',
+  'in',
 ] as const
 export type SearchOperator = (typeof searchOperators)[number]
 
@@ -27,7 +28,7 @@ export interface SearchToken {
 export type ParsedSearch = Pick<
   MailQuery,
   'text' | 'from' | 'to' | 'subject' | 'after' | 'before' | 'hasAttachment' | 'unread'
-> & { starred?: boolean }
+> & { starred?: boolean; in?: string }
 
 const pattern = /([A-Za-z_]+):(?:"([^"]*)"?|(\S*))|"[^"]*"?|\S+/g
 const unitDays: Record<string, number> = { d: 1, w: 7, m: 30, y: 365 }
@@ -57,6 +58,10 @@ function apply(search: ParsedSearch, operator: SearchOperator, value: string, no
     case 'subject':
       if (!value) return false
       search[operator] = value
+      return true
+    case 'in':
+      if (!value) return false
+      search.in = value
       return true
     case 'has':
       if (v !== 'attachment' && v !== 'attachments') return false
@@ -108,6 +113,48 @@ export function parseSearch(
   const text = words.join(' ').trim()
   if (text) search.text = text
   return { tokens, search }
+}
+
+/** Folder words `in:` understands, as in Gmail, and the view each one opens. */
+const inViews: Record<string, View> = {
+  inbox: 'inbox',
+  sent: 'sent',
+  draft: 'drafts',
+  drafts: 'drafts',
+  archive: 'archive',
+  spam: 'junk',
+  junk: 'junk',
+  trash: 'trash',
+  bin: 'trash',
+  starred: 'starred',
+  all: 'all',
+  anywhere: 'all',
+}
+
+/** The view an `in:` value names (`in:sent`), or undefined for a folder name. */
+export function inView(value: string): View | undefined {
+  return inViews[value.toLowerCase()]
+}
+
+/**
+ * What a search box starts with in a view or folder, so a search there stays there until the
+ * filter is removed. The inbox and all mail search everywhere.
+ */
+export function searchScope(view: View, folderName?: string): string {
+  if (folderName) {
+    const name = folderName.replace(/"/g, '')
+    return 'in:' + (/\s/.test(name) ? '"' + name + '"' : name) + ' '
+  }
+  if (view === 'starred') return 'is:starred '
+  if (view === 'junk') return 'in:spam '
+  return view === 'inbox' || view === 'all' ? '' : 'in:' + view + ' '
+}
+
+/** The typed search without its `in:` filter, for when the folder is chosen another way. */
+export function withoutIn(input: string): string {
+  const token = parseSearch(input).tokens.find((t) => t.operator === 'in')
+  if (!token) return input.trim()
+  return (input.slice(0, token.start) + input.slice(token.end)).replace(/\s+/g, ' ').trim()
 }
 
 /**

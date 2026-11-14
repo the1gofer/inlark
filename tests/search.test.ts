@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { gmailSearch, parseSearch, withoutTyped } from '../packages/core/src'
+import {
+  gmailSearch,
+  inView,
+  parseSearch,
+  searchScope,
+  withoutIn,
+  withoutTyped,
+} from '../packages/core/src'
 
 const now = new Date('2026-10-25T12:00:00Z')
 
@@ -73,5 +80,34 @@ describe('search operators', () => {
         searchFields: ['unread', 'starred'],
       }),
     ).toEqual({ view: 'all', after: '2026-01-05T00:00:00.000Z' })
+  })
+})
+
+describe('in: folder filter', () => {
+  it('is an operator the box highlights', () => {
+    const { search, tokens } = parseSearch('in:sent allan', now)
+    expect(search).toEqual({ in: 'sent', text: 'allan' })
+    expect(tokens[0]).toMatchObject({ operator: 'in', start: 0, end: 7 })
+    expect(parseSearch('in:"Board Prep" budget', now).search.in).toBe('Board Prep')
+  })
+  it('names views the way Gmail does', () => {
+    expect(inView('Sent')).toBe('sent')
+    expect(inView('spam')).toBe('junk')
+    expect(inView('anywhere')).toBe('all')
+    expect(inView('Receipts')).toBeUndefined()
+  })
+  it('starts a search in the folder being viewed', () => {
+    expect(searchScope('sent')).toBe('in:sent ')
+    expect(searchScope('junk')).toBe('in:spam ')
+    expect(searchScope('starred')).toBe('is:starred ')
+    expect(searchScope('inbox')).toBe('')
+    expect(searchScope('all')).toBe('')
+    expect(searchScope('all', 'Board Prep')).toBe('in:"Board Prep" ')
+    expect(searchScope('inbox', 'Receipts')).toBe('in:Receipts ')
+  })
+  it('drops the filter from the words when the folder is searched directly', () => {
+    expect(withoutIn('in:sent allan')).toBe('allan')
+    expect(withoutIn('from:karla in:"Board Prep" budget')).toBe('from:karla budget')
+    expect(withoutIn('allan')).toBe('allan')
   })
 })
