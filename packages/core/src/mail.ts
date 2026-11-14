@@ -98,8 +98,13 @@ export function draftFingerprint(message: Message): string {
   ])
 }
 export function unlinkedServerDrafts(conversations: Conversation[], local: Draft[]): Message[] {
+  // A draft being saved again also stands for the copy it is replacing, until that copy is gone.
   const linked = new Set(
-    local.filter((d) => d.serverId).map((d) => scopeKey(d.accountId, d.serverId!)),
+    local.flatMap((d) =>
+      [d.serverId, ...(d.replacedServerIds || [])]
+        .filter((id): id is string => !!id)
+        .map((id) => scopeKey(d.accountId, id)),
+    ),
   )
   return [
     ...new Map(

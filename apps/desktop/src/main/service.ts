@@ -242,6 +242,8 @@ export class MailService {
   private undos = new Map<string, UndoEntry[]>()
   private writes = new Map<string, Promise<unknown>>()
   private busyDrafts = new Set<string>()
+  /** Draft ID → the server copy a running save has replaced and is still removing. */
+  private replacingDrafts = new Map<string, string>()
   private startingSends = new Set<string>()
   private refreshing = new Set<string>()
   private filing = new Set<string>()
@@ -1097,7 +1099,11 @@ export class MailService {
     this.emit({ type: 'changed', accountId: input.accountId })
   }
   // Sent records also serve as tombstones for a stale renderer draft after a crash.
-  drafts = async () => [...this.localDrafts.values()]
+  drafts = async () =>
+    [...this.localDrafts.values()].map((draft) => {
+      const replaced = this.replacingDrafts.get(draft.id)
+      return replaced ? { ...draft, replacedServerIds: [replaced] } : draft
+    })
   stageRemoteAttachments = async (
     accountId: string,
     attachments: Attachment[],
@@ -1226,8 +1232,11 @@ export class MailService {
     return readFile(join(this.store.directory, 'attachments', id))
   }
   resumeDraft = async (accountId: string, messageId: string): Promise<Draft> => {
+    // Opening the copy a save is replacing resumes the same draft, not a second one.
     const existing = [...this.localDrafts.values()].find(
-      (d) => d.accountId === accountId && d.serverId === messageId,
+      (d) =>
+        d.accountId === accountId &&
+        (d.serverId === messageId || this.replacingDrafts.get(d.id) === messageId),
     )
     if (existing) return existing
     const [message] = await this.guard(accountId, async (p, a) => {
@@ -1398,6 +1407,13 @@ export class MailService {
           : undefined
       const draft = protectedMime ? input : await this.uploadDraft(input)
       const serverId = await provider.createDraft(account, draft, undefined, protectedMime)
+      // Point at the new copy at once. Until the previous copy is removed, which can take a while
+      // behind a busy Gmail connection, a refreshed list would otherwise show both copies, the
+      // new one as a separate server draft, and opening it would start a second local draft.
+      if (input.serverId && input.serverId !== serverId)
+        this.replacingDrafts.set(input.id, input.serverId)
+      committed = { ...draft, serverId, serverFingerprint: undefined }
+      this.localDrafts.set(committed.id, committed)
       const [remote] = await this.serverMessages(
         provider,
         account,
@@ -1431,6 +1447,7 @@ export class MailService {
       await this.persistDrafts()
       return saved
     } finally {
+      this.replacingDrafts.delete(input.id)
       this.busyDrafts.delete(input.id)
     }
   }

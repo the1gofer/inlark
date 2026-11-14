@@ -98,6 +98,17 @@ describe('mail domain', () => {
       ),
     ).toEqual([scopeKey('account', 'conflict'), scopeKey('other', 'local')])
   })
+  it('does not list the server copy a draft save is replacing as another draft', () => {
+    const replaced = message({ id: 'old', keywords: { $draft: true } })
+    const current = message({ id: 'new', keywords: { $draft: true } })
+    const conversations = [conversationFromMessages('account', 'thread', [replaced, current])]
+    expect(
+      unlinkedServerDrafts(conversations, [draft({ serverId: 'new', replacedServerIds: ['old'] })]),
+    ).toEqual([])
+    expect(
+      unlinkedServerDrafts(conversations, [draft({ serverId: 'new' })]).map((m) => m.id),
+    ).toEqual(['old'])
+  })
   it('replies to the newest sent or received message, never to an unsent draft', () => {
     const first = message({ id: 'first' })
     const answer = message({ id: 'answer', receivedAt: '2026-09-23T11:00:00Z' })
