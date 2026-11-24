@@ -427,14 +427,14 @@ export function SettingsPanel({
                     )}
                   >
                     <div>
-                      <strong>Archive when you reply</strong>
+                      <strong>Archive when you reply or forward</strong>
                       <p>
-                        A conversation leaves the inbox once your reply is sent. A new reply brings
-                        it back.
+                        A conversation leaves the inbox once your reply or forward is sent, and you
+                        move on as if you’d archived it. A new reply brings it back.
                       </p>
                     </div>
                     <Switch
-                      aria-label="Archive when you reply"
+                      aria-label="Archive when you reply or forward"
                       checked={bootstrap.settings.archiveOnReply !== false}
                       onCheckedChange={(archiveOnReply) => void update({ archiveOnReply })}
                     />
