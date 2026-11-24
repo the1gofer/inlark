@@ -375,11 +375,18 @@ export function App() {
     getNextPageParam: (last) => last.next,
     enabled: accounts.length > 0,
   })
+  // Conversations just answered or forwarded, hidden from the inbox while the server sends and
+  // archives them, so they don't flash back during the undo window. Keyed account + thread.
+  const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set())
+  const hideAnswered = view === 'inbox' && !route.q
   const conversations = useMemo(
-    () => [
-      ...new Map((mail.data?.pages.flatMap((p) => p.items) || []).map((c) => [c.key, c])).values(),
-    ],
-    [mail.data],
+    () =>
+      [
+        ...new Map(
+          (mail.data?.pages.flatMap((p) => p.items) || []).map((c) => [c.key, c]),
+        ).values(),
+      ].filter((c) => !hideAnswered || !answered.has(c.accountId + '\n' + c.id)),
+    [mail.data, answered, hideAnswered],
   )
   const total = mail.data?.pages[0]?.total || 0
   // Accounts still indexing may be missing older mail, so their results are never the whole story.
@@ -497,6 +504,50 @@ export function App() {
     setFocused(c.key)
     go({ thread: c.id, threadAccount: c.accountId }, false)
   }
+  /** Leaves the open conversation the way archiving does: to its neighbor, or the list. */
+  const leaveConversation = () => {
+    const current = conversations.findIndex(
+      (c) => c.id === route.thread && c.accountId === route.threadAccount,
+    )
+    const preference = settings.afterArchive || 'next'
+    const neighbor =
+      current >= 0 && preference !== 'list'
+        ? preference === 'next'
+          ? (conversations[current + 1] ?? conversations[current - 1])
+          : (conversations[current - 1] ?? conversations[current + 1])
+        : undefined
+    if (neighbor) open(neighbor)
+    else back()
+  }
+  /** After a reply or forward goes out, the conversation leaves the inbox, so the reader does too. */
+  const sentFrom = (draft: Draft) => {
+    const threadId = draft.replyThreadId || draft.forwardThreadId
+    if (!threadId || settings.archiveOnReply === false) return
+    const key = draft.accountId + '\n' + threadId
+    if (view !== 'inbox' || route.q) return
+    if (route.thread === threadId && route.threadAccount === draft.accountId) leaveConversation()
+    setAnswered((keys) => new Set(keys).add(key))
+    // By then the server has sent and archived it, or the send failed and it belongs back.
+    setTimeout(
+      () =>
+        setAnswered((keys) => {
+          const next = new Set(keys)
+          next.delete(key)
+          return next
+        }),
+      ((settings.undoSendSeconds ?? 10) + 60) * 1000,
+    )
+  }
+  /** An undone send puts the conversation back where it was. */
+  const unsend = (draft: Draft) => {
+    const threadId = draft.replyThreadId || draft.forwardThreadId
+    if (!threadId) return
+    setAnswered((keys) => {
+      const next = new Set(keys)
+      next.delete(draft.accountId + '\n' + threadId)
+      return next
+    })
+  }
   const targets = (): MutationTarget[] =>
     route.thread
       ? [{ accountId: route.threadAccount!, threadId: route.thread }]
@@ -512,20 +563,7 @@ export function App() {
     const { kind, targets: chosen } = remindFor
     setRemindFor(undefined)
     const snoozing = kind === 'snooze'
-    if (route.thread && snoozing) {
-      const current = conversations.findIndex(
-        (c) => c.id === route.thread && c.accountId === route.threadAccount,
-      )
-      const preference = settings.afterArchive || 'next'
-      const neighbor =
-        current >= 0 && preference !== 'list'
-          ? preference === 'next'
-            ? (conversations[current + 1] ?? conversations[current - 1])
-            : (conversations[current - 1] ?? conversations[current + 1])
-          : undefined
-      if (neighbor) open(neighbor)
-      else back()
-    }
+    if (route.thread && snoozing) leaveConversation()
     try {
       let list: Reminder[] = []
       for (const target of chosen)
@@ -830,6 +868,7 @@ export function App() {
               replyThreadId: message.threadId,
             }
           : {}),
+        ...(message && kind === 'forward' ? { forwardThreadId: message.threadId } : {}),
         ...partial,
         html,
         text,
@@ -3049,6 +3088,7 @@ export function App() {
             onOpenSnippets={() => openSettings('snippets')}
             notify={notify}
             onSaved={() => void queryClient.invalidateQueries({ queryKey: ['drafts'] })}
+            onSent={sentFrom}
             onScheduled={(draft, undoable) =>
               setToast({
                 text: undoable ? 'Sending…' : 'Scheduled for ' + laterLabel(draft.sendAt!),
@@ -3058,6 +3098,7 @@ export function App() {
                 onUndo: () => {
                   setToast({ text: 'Undoing…' })
                   api.cancelScheduledSend(draft.id).then((editable) => {
+                    unsend(draft)
                     void queryClient.invalidateQueries({ queryKey: ['drafts'] })
                     setToast(undefined)
                     setComposer(editable)

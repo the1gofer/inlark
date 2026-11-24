@@ -1185,6 +1185,15 @@ export function Reader({
                     )}
                     {!draft && (
                       <IconButton
+                        label="Forward"
+                        className="message-forward"
+                        onClick={() => onReply(message, 'forward')}
+                      >
+                        <Forward size={13} />
+                      </IconButton>
+                    )}
+                    {!draft && (
+                      <IconButton
                         label="Message details"
                         aria-expanded={details.has(message.id)}
                         onClick={() => toggle(message.id, setDetails)}

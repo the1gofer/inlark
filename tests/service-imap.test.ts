@@ -366,6 +366,14 @@ describe('IMAP sending', () => {
     await vi.waitFor(() => expect(server.box('INBOX').messages).toHaveLength(0))
     expect(server.box('Archive').messages).toHaveLength(1)
   })
+  it('moves a forwarded conversation out of the inbox once the forward is sent', async () => {
+    server.deliver('INBOX', { messageId: 'notice@x', subject: 'Notice', text: 'FYI' })
+    await (service as any).providers.get('imap-connection').syncPass('all')
+    const [thread] = (await service.query({ view: 'inbox' })).items
+    await service.send({ ...draft, subject: 'Fwd: Notice', forwardThreadId: thread.id })
+    await vi.waitFor(() => expect(server.box('INBOX').messages).toHaveLength(0))
+    expect(server.box('Archive').messages).toHaveLength(1)
+  })
   it('leaves a replied conversation in the inbox when archiving on reply is off', async () => {
     await service.setSettings({ ...(await service.bootstrap()).settings, archiveOnReply: false })
     await answer()

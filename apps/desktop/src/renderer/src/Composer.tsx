@@ -125,6 +125,7 @@ export function Composer({
   notify,
   onSaved,
   onScheduled,
+  onSent,
 }: {
   initial: Draft
   suggestions: Address[]
@@ -141,6 +142,8 @@ export function Composer({
   onSaved: () => void
   /** A send was scheduled: `undoable` for the short undo window, otherwise for later. */
   onScheduled: (draft: Draft, undoable: boolean) => void
+  /** The message is on its way: sent, or handed to the server to send. */
+  onSent?: (draft: Draft) => void
 }) {
   const [downgradeMode, setDowngradeMode] = useState<'none' | 'sign' | undefined>()
   // Once someone picks a protection mode, the recommendation never overrides it.
@@ -510,6 +513,7 @@ export function Composer({
         await localDeleteDraft(scheduled.id).catch(() => {})
         onSaved()
         onScheduled(scheduled, !later)
+        if (!later) onSent?.(scheduled)
         onClose()
       } catch (error) {
         notify(friendlyError(error), 'error')
@@ -533,6 +537,7 @@ export function Composer({
           notify('Message sent. The local draft cache could not be cleaned up.'),
         )
         onSaved()
+        onSent?.(latest.current)
         onClose()
       } else {
         notify(result.message, 'error')
@@ -552,6 +557,7 @@ export function Composer({
       if (saved?.status === 'sent') {
         notify('Delivery confirmed.')
         onSaved()
+        onSent?.(latest.current)
         onClose()
         return
       }

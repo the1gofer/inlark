@@ -202,6 +202,7 @@ export const draftSchema = z.object({
   inReplyTo: z.array(z.string()).optional(),
   references: z.array(z.string()).optional(),
   replyThreadId: id.optional(),
+  forwardThreadId: id.optional(),
   serverId: id.optional(),
   serverFingerprint: z.string().optional(),
   encryption: z.enum(['none', 'encrypt', 'sign']).optional(),

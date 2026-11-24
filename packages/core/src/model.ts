@@ -248,6 +248,8 @@ export interface Draft {
   inReplyTo?: string[]
   references?: string[]
   replyThreadId?: string
+  /** The conversation this message forwards, so it can leave the inbox once sent. */
+  forwardThreadId?: string
   serverId?: string
   serverFingerprint?: string
   encryption?: 'none' | 'encrypt' | 'sign'
@@ -287,7 +289,7 @@ export interface Settings {
   shortcuts?: Record<string, string[][]>
   /** Seconds a sent message waits before it leaves, so it can be undone. 0 sends at once. */
   undoSendSeconds?: number
-  /** Move a conversation out of the inbox once your reply to it is sent. On unless false. */
+  /** Move a conversation out of the inbox once your reply or forward is sent. On unless false. */
   archiveOnReply?: boolean
   /** Saved text to insert while writing. `{first_name}` becomes the first recipient's first name. */
   snippets?: Snippet[]
